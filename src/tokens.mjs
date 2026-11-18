@@ -2,7 +2,17 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 const prefix = 'enc:v1:';
 
+import { readFileSync } from 'node:fs';
+
+// TOKEN_ENCRYPTION_KEY_FILE lets the key live outside the data volume (Docker secret, separate mount).
+function loadKey() {
+  if (!process.env.TOKEN_ENCRYPTION_KEY && process.env.TOKEN_ENCRYPTION_KEY_FILE) {
+    process.env.TOKEN_ENCRYPTION_KEY = readFileSync(process.env.TOKEN_ENCRYPTION_KEY_FILE, 'utf8').trim();
+  }
+}
+
 export function assertTokenKey() {
+  loadKey();
   if (!/^[a-f0-9]{64}$/i.test(process.env.TOKEN_ENCRYPTION_KEY || '')) {
     throw new Error('TOKEN_ENCRYPTION_KEY must be a 32-byte hex key');
   }

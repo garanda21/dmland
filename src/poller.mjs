@@ -6,7 +6,7 @@ import { handleComment, realSender, parseMetaTime, parseDbTime, throttle, sendin
 import { pollDMs, captureCounts } from './capture.mjs';
 
 const SEVEN_DAYS = 7 * 24 * 3600 * 1000; // Meta limit for replying to a comment
-const MAX_PER_CYCLE = 10;                 // cap of replies per cycle (10/min = 600/h, under Meta's 750/h limit)
+const MAX_PER_CYCLE = 10;                 // cap of replies per cycle; the hourly cap (max 200) is enforced separately
 const RECENT_MEDIA = 5;                   // for "all posts" automations: the latest N
 
 export const status = { enabled: false, running: false, lastRun: null, lastError: null, lastCount: 0, totalSent: 0, intervalSec: 60 };

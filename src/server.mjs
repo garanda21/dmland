@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const envPath = join(root, '.env');
+const envPath = process.env.ENV_FILE || join(root, '.env');
 
 // --- minimal .env loader (no dependencies) ---
 function loadEnv() {
@@ -24,7 +24,8 @@ function ensureEnv(key, value) {
 }
 ensureEnv('DASHBOARD_PASSWORD', randomBytes(9).toString('base64url'));
 ensureEnv('WEBHOOK_VERIFY_TOKEN', randomBytes(12).toString('base64url'));
-ensureEnv('TOKEN_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
+// The key can come from a file (e.g. a Docker secret) so it never sits next to the database.
+if (!process.env.TOKEN_ENCRYPTION_KEY && !process.env.TOKEN_ENCRYPTION_KEY_FILE) ensureEnv('TOKEN_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
 if (existsSync(envPath)) chmodSync(envPath, 0o600);
 
 const { all, get, run, logEvent } = await import('./db.mjs');
@@ -38,7 +39,7 @@ for (const channel of all('SELECT id, token FROM channels WHERE token IS NOT NUL
 const meta = await import('./meta.mjs');
 const { apiFor } = await import('./platform.mjs');
 const { commentFromWebhook } = await import('./facebook.mjs');
-const { handleComment, realSender, drySender, hourlyCap } = await import('./engine.mjs');
+const { handleComment, realSender, drySender, hourlyCap, resumeSending } = await import('./engine.mjs');
 const poller = await import('./poller.mjs');
 const { automationFields } = await import('./automations.mjs');
 const stats = await import('./stats.mjs');
@@ -49,7 +50,7 @@ const WEBHOOKS_ENABLED = process.env.WEBHOOKS_ENABLED === 'on';
 const PORT = Number(process.env.PORT || 3000);
 const mediaCache = new Map(); // channel -> { at, data }
 const j = (s, d) => { try { return JSON.parse(s); } catch { return d; } };
-const safeEq = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
+const safeEq = (a, b) => { const x = Buffer.from(String(a ?? '')), y = Buffer.from(String(b ?? '')); return x.length === y.length && timingSafeEqual(x, y); };
 
 function send(res, status, body, type = 'application/json') {
   res.writeHead(status, { 'Content-Type': type + '; charset=utf-8' });
@@ -182,6 +183,11 @@ async function api(req, res, url) {
   }
 
   if (p === '/api/poller' && m === 'GET') return send(res, 200, poller.getStatus());
+  if (p === '/api/sending/resume' && m === 'POST') {
+    if (body.confirm !== 'RESUME') return send(res, 400, { error: 'Confirmation required' });
+    resumeSending();
+    return send(res, 200, poller.getStatus());
+  }
   if (p === '/api/analytics' && m === 'GET') return send(res, 200, analytics({ brand: url.searchParams.get('brand'), range: url.searchParams.get('range') || 7 }));
   if (p === '/api/runs' && m === 'GET') return send(res, 200, all(`SELECT r.*, a.name AS automation, a.mode, a.channel_id, ch.brand_id, c.username, cp.status AS capture_status FROM runs r
     JOIN automations a ON a.id=r.automation_id JOIN channels ch ON ch.id=a.channel_id
@@ -254,7 +260,7 @@ async function api(req, res, url) {
 async function webhook(req, res, url) {
   if (req.method === 'GET') {
     const q = url.searchParams;
-    if (q.get('hub.mode') === 'subscribe' && q.get('hub.verify_token') === process.env.WEBHOOK_VERIFY_TOKEN) {
+    if (q.get('hub.mode') === 'subscribe' && safeEq(q.get('hub.verify_token'), process.env.WEBHOOK_VERIFY_TOKEN)) {
       logEvent('webhook', 'Webhook verification OK');
       return send(res, 200, q.get('hub.challenge') || '', 'text/plain');
     }

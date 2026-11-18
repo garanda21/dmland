@@ -133,11 +133,26 @@ export function handleComment(channel, comment, { sender, dry = false, instant =
 
 // Meta limits: 750 private replies per hour per account. If Meta slows or blocks us, we pause ALL sending.
 export const throttle = { until: 0, reason: '' };
-export const isRateLimit = (e) => [4, 17, 32, 613].includes(e.code) || e.status === 429 || /rate limit|too many|request limit/i.test(e.message || '');
-export const isBlocked = (e) => e.code === 368 || /temporarily blocked|restricted|spam/i.test(e.message || '');
+{ // restore a rate-limit pause that was still running when the process stopped
+  const saved = get('SELECT until, reason FROM sending_pause WHERE id=1');
+  if (saved && saved.until > Date.now()) { throttle.until = saved.until; throttle.reason = saved.reason; }
+}
 
+// Clears a manual stop (and any running pause). Called from the dashboard after the user reviewed the account.
+export function resumeSending() {
+  run('DELETE FROM sending_stop WHERE id=1');
+  run('DELETE FROM sending_pause WHERE id=1');
+  throttle.until = 0; throttle.reason = '';
+  logEvent('info', 'Sending resumed manually from the dashboard.');
+}
+export const isRateLimit = (e) => [4, 17, 32, 613].includes(e.code) || e.status === 429 || /rate limit|too many|request limit/i.test(e.message || '');
+// Only Meta's explicit block signals stop all sending. A bare "restricted" (e.g. a permission error) does not.
+export const isBlocked = (e) => e.code === 368 || /temporarily blocked|action (?:is |was )?blocked|spam/i.test(e.message || '');
+
+// Instagram allows roughly 200 automated DMs per hour per account: never configure above that.
+export const MAX_HOURLY_CAP = 200;
 const configuredCap = Number(process.env.HOURLY_CAP || 60);
-export const hourlyCap = Number.isInteger(configuredCap) && configuredCap > 0 ? Math.min(configuredCap, 600) : 60;
+export const hourlyCap = Number.isInteger(configuredCap) && configuredCap > 0 ? Math.min(configuredCap, MAX_HOURLY_CAP) : 60;
 const validCommentTime = (time) => Number.isFinite(time) && time <= Date.now() + 60_000 && Date.now() - time < 7 * 86_400_000;
 export const sendingRestriction = () => get('SELECT reason FROM sending_stop WHERE id=1')?.reason ?? null;
 export const sendingPaused = () => throttle.until > Date.now() || sendingRestriction() !== null;
@@ -149,6 +164,8 @@ export function pauseForMeta(error) {
   } else if (isRateLimit(error)) {
     throttle.until = Date.now() + 10 * 60_000;
     throttle.reason = error.message;
+    // Persist the pause so a restart (or a crash loop) does not hit Meta again before it ends.
+    run('INSERT OR REPLACE INTO sending_pause(id, until, reason) VALUES (1,?,?)', throttle.until, error.message);
     logEvent('error', 'Meta paused sending due to a rate limit. Pausing for 10 minutes.');
   }
 }

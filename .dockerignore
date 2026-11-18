@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+data
+config
+node_modules
+test
+scripts
+assets
+docs
+*.md

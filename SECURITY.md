@@ -8,7 +8,7 @@ Please do not open a public issue for security problems. Use GitHub's
 ## What DMLand stores, and where
 
 - Everything is stored locally in `data/app.db` (SQLite) on the machine that runs DMLand.
-- Meta access tokens are encrypted in SQLite with AES-256-GCM. The dashboard shows only the last four characters. The key is generated in `.env` on first start unless supplied through `TOKEN_ENCRYPTION_KEY`. Keep a protected backup of the key away from the SQLite backup. Keep both private.
+- Meta access tokens are encrypted in SQLite with AES-256-GCM. The dashboard shows only the last four characters. The key is generated in `.env` on first start unless supplied through `TOKEN_ENCRYPTION_KEY` or `TOKEN_ENCRYPTION_KEY_FILE`. Encryption protects database copies taken without the key; it does not protect against someone with access to the running host. Keep a protected backup of the key away from the SQLite backup. Keep both private.
 - Emails collected through the "ask for email first" mode are stored in the same database and
   can be exported as CSV from the Contacts page.
 - DMLand sends nothing to any third party. It only talks to the Meta Graph API.
@@ -27,10 +27,8 @@ Please do not open a public issue for security problems. Use GitHub's
 
 Private reply attempts share a rolling per-account cap across polling and webhooks. The default is 60 per hour. To start a pilot, use a secondary professional account, one reel and one exact keyword, with a single DM and no public reply or email capture.
 
-If Meta restricts sending, the dashboard shows a stop that survives restarts. Review the restriction in Meta before clearing it. When ready, stop DMLand, run the following from the repository root (use your actual database path if you set `DB_FILE`), then start DMLand again.
+If Meta restricts sending, the dashboard shows a stop that survives restarts. Review the restriction in Meta (Account Status) before clearing it, then use the "Resume sending" button in the dashboard. Rate-limit pauses are also persisted, so a restart does not retry Meta early.
 
-```sh
-sqlite3 data/app.db 'DELETE FROM sending_stop WHERE id=1;'
-```
+The hourly cap cannot be set above 200, which is roughly what Instagram allows for automated messages per account.
 
 The stop covers all accounts on the instance. A regular rate limit has a ten-minute retry delay. Inbox analytics are opt-in via `INBOX_ANALYTICS=on`. Email capture still reads conversations when an active capture is waiting.

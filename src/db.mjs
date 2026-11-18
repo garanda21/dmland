@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS reply_attempts (
 );
 CREATE INDEX IF NOT EXISTS reply_attempts_time ON reply_attempts(attempted_at);
 
+CREATE TABLE IF NOT EXISTS sending_pause (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  until INTEGER NOT NULL,
+  reason TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sending_stop (
   id INTEGER PRIMARY KEY CHECK (id=1),
   reason TEXT NOT NULL
