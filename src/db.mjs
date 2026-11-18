@@ -72,6 +72,26 @@ CREATE TABLE IF NOT EXISTS runs (
   UNIQUE(automation_id, comment_id)
 );
 
+CREATE TABLE IF NOT EXISTS reply_claims (
+  account_id TEXT NOT NULL,
+  comment_id TEXT NOT NULL,
+  media_id TEXT NOT NULL,
+  author TEXT NOT NULL,
+  PRIMARY KEY (account_id, comment_id),
+  UNIQUE (account_id, media_id, author)
+);
+
+CREATE TABLE IF NOT EXISTS reply_attempts (
+  account_id TEXT NOT NULL,
+  attempted_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reply_attempts_time ON reply_attempts(attempted_at);
+
+CREATE TABLE IF NOT EXISTS sending_stop (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  reason TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT DEFAULT CURRENT_TIMESTAMP,

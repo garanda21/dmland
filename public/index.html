@@ -433,6 +433,7 @@ document.addEventListener('click', () => $('#bm')?.classList.remove('open'));
 const pollPill = () => {
   const p = S.poller; if (!p) return '';
   if (!p.enabled) return '<span class="pill"><i class="dot off"></i>Comment reading · off</span>';
+  if (p.restricted) return `<span class="pill" title="${esc(p.restricted)}"><i class="dot warn"></i>${T('Sending stopped by Meta')}</span>`;
   if (p.pausedUntil) return `<span class="pill" title="${esc(p.pauseReason)}"><i class="dot warn"></i>Paused by Meta until ${esc(new Date(p.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>`;
   if (p.lastError) return `<span class="pill" title="${esc(p.lastError)}"><i class="dot bad"></i>Comment reading · error</span>`;
   return '<span class="pill"><i class="dot"></i>Comment reading · on</span>';

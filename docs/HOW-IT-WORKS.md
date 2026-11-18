@@ -18,7 +18,7 @@
 | Rule | Value |
 |---|---|
 | Meta limit for private replies | about 750 per hour per Instagram account |
-| DMLand's own cap | 600 per hour and 10 per minute per account, with 2–5 s between sends |
+| DMLand's own cap | 60 attempts per hour per account across polling and webhooks. Polling handles up to 10 per cycle, with 2–5 s between sends |
 | Comment age | Meta only allows a private reply for comments under 7 days old |
 | One reply per comment | The same comment is never answered twice |
 | Own comments | Ignored |
@@ -35,7 +35,7 @@ then the public reply goes under the comment. Differences:
 
 | Rule | Value |
 |---|---|
-| Hourly limit | Meta does not publish a number for Pages. DMLand applies the same cap of 600 per hour per Page until this is confirmed. Instagram and the Page each have their own counter. |
+| Hourly limit | Meta does not publish a number for Pages. DMLand applies the same default of 60 attempts per hour per Page until this is confirmed. Instagram and the Page each have their own counter. |
 | Comment age | Private replies only for comments under 7 days old, one per comment (same as Instagram) |
 | Follow-up messages | Only within 24 hours of the person's last message (Messenger's standard window), which covers the email capture conversation |
 | Message size | DMLand keeps the 1000-byte cap for both platforms. Messages with a button are cut to 640 characters (Messenger limit). |

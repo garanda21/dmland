@@ -64,7 +64,7 @@ and a token with the permissions above for each platform they connect.
 ## Step 4: remind them
 
 - DMLand only runs while the computer and the program are on.
-- Meta allows about 750 automated replies per hour per Instagram account; DMLand stays at 600 (and
+- Meta allows about 750 automated replies per hour per Instagram account; DMLand defaults to 60 private reply attempts per hour (and
   uses the same cap for Facebook Pages, where Meta publishes no number). If Meta pauses
   sending, DMLand waits and retries; comments are not lost as long as they are under 7 days old.
 - Emails collected are personal data. They are responsible for consent and privacy law.

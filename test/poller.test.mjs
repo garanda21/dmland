@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 process.env.DB_FILE = ':memory:';
 const { run, get, all } = await import('../src/db.mjs');
 const { pollOnce } = await import('../src/poller.mjs');
-const { throttle } = await import('../src/engine.mjs');
+const { throttle, handleComment, hourlyCap } = await import('../src/engine.mjs');
 
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString().replace('Z', '+0000'); // formato de Meta
 const H = 3600e3, D = 24 * H;
@@ -80,5 +80,36 @@ const asked = [];
 const paged = { listComments: async (h, t, media, limit, after) => { asked.push(after); return pages[asked.length - 1]; }, makeSender: sender, pause: async () => {} };
 assert.equal(await pollOnce(paged), 4, 'handles the 4 new ones from the first 2 pages');
 assert.deepEqual(asked, [null, 'C1', 'C2'], 'asks for 3 pages and stops: the third is already older than the activation');
+
+// Shared guard for direct webhook-style delivery and polling.
+run(`INSERT INTO automations(channel_id,name,media_id,keywords,dm_text,delay_seconds,since)
+     VALUES (1,'Overlapping','MP','["montage"]','x',0, datetime('now','-1 hour'))`);
+const account = get('SELECT * FROM channels WHERE id=1');
+const deliver = (id, user, makeSender = sender, age = 60e3) =>
+  handleComment(account, { ...mk(id, 'montage', age, user), media: { id: 'MP' } }, { sender: makeSender() });
+const first = deliver('overlap', 'tester');
+assert.deepEqual(first.map((item) => item.automation), ['P']);
+await first[0].done;
+assert.equal(deliver('overlap', 'tester').length, 0);
+assert.equal(deliver('repeat', 'tester').length, 0);
+assert.equal(deliver('old', 'fresh', sender, 8 * D).length, 0);
+run("DELETE FROM automations WHERE name='P'");
+assert.equal(deliver('after-deleting-rule', 'tester').length, 0);
+
+const blocked = () => ({ ...sender(), privateReplyText: async () => {
+  throw Object.assign(new Error('Temporarily blocked'), { code: 368 });
+} });
+await deliver('blocked', 'another', blocked)[0].done;
+assert.equal(get('SELECT reason FROM sending_stop').reason, 'Temporarily blocked');
+assert.equal(deliver('different', 'other').length, 0);
+assert.equal(await pollOnce(deps([mk('from-poller', 'montage', 60e3, 'other')])), 0);
+
+run('DELETE FROM sending_stop');
+run('DELETE FROM reply_attempts');
+for (let i = 0; i < hourlyCap; i++) {
+  run('INSERT INTO reply_attempts(account_id,attempted_at) VALUES (?,?)', account.ig_user_id, Date.now());
+}
+assert.equal(deliver('over-cap', 'other').length, 0);
+assert.equal(await pollOnce(deps([mk('over-cap-poll', 'montage', 60e3, 'other')])), 0);
 
 console.log('OK: poller tests passed');

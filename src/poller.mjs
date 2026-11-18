@@ -2,16 +2,15 @@
 // No AI: it only queries the Meta API and reuses the same engine as the webhook.
 import { all, logEvent } from './db.mjs';
 import { apiFor } from './platform.mjs';
-import { handleComment, realSender, parseMetaTime, parseDbTime, throttle } from './engine.mjs';
+import { handleComment, realSender, parseMetaTime, parseDbTime, throttle, sendingPaused, sendingRestriction, hasReplyBudget } from './engine.mjs';
 import { pollDMs, captureCounts } from './capture.mjs';
 
 const SEVEN_DAYS = 7 * 24 * 3600 * 1000; // Meta limit for replying to a comment
 const MAX_PER_CYCLE = 10;                 // cap of replies per cycle (10/min = 600/h, under Meta's 750/h limit)
-const HOURLY_CAP = Number(process.env.HOURLY_CAP || 600); // cap per account per hour (Meta allows 750)
 const RECENT_MEDIA = 5;                   // for "all posts" automations: the latest N
 
 export const status = { enabled: false, running: false, lastRun: null, lastError: null, lastCount: 0, totalSent: 0, intervalSec: 60 };
-export const getStatus = () => ({ ...status, captures: captureCounts(), pausedUntil: throttle.until > Date.now() ? new Date(throttle.until).toISOString() : null, pauseReason: throttle.until > Date.now() ? throttle.reason : null });
+export const getStatus = () => ({ ...status, restricted: sendingRestriction(), captures: captureCounts(), pausedUntil: throttle.until > Date.now() ? new Date(throttle.until).toISOString() : null, pauseReason: throttle.until > Date.now() ? throttle.reason : null });
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // Spaces sends 2 to 5 s apart so they do not go out in a burst.
@@ -51,12 +50,7 @@ let lastTruncWarn = 0;
 // Processes one account. The caps (per cycle and per hour) are PER ACCOUNT, like Meta's limits.
 async function pollChannel(d, ch, now) {
   const autos = all('SELECT * FROM automations WHERE channel_id=? AND active=1', ch.id);
-  if (!autos.length) return 0;
-  // Hourly cap: what is left waits for the next cycle (comments are handled up to 7 days later)
-  const sentLastHour = all(`SELECT COUNT(*) AS n FROM runs r JOIN automations a ON a.id=r.automation_id
-    WHERE a.channel_id=? AND r.status='done' AND r.created_at >= datetime('now','-1 hour')`, ch.id)[0].n;
-  let budget = HOURLY_CAP - sentLastHour;
-  if (budget <= 0) return 0;
+  if (!autos.length || !hasReplyBudget(ch.ig_user_id)) return 0;
   // Which posts to look at: those with their own automation, plus the latest N if any is "all"
   const mediaIds = new Set(autos.filter((a) => a.media_id).map((a) => a.media_id));
   if (autos.some((a) => !a.media_id)) {
@@ -65,7 +59,7 @@ async function pollChannel(d, ch, now) {
   }
   let launchedTotal = 0;
   for (const mediaId of mediaIds) {
-    if (launchedTotal >= MAX_PER_CYCLE || budget <= 0 || throttle.until > Date.now()) break;
+    if (launchedTotal >= MAX_PER_CYCLE || sendingPaused()) break;
     // Since when a comment matters: the more recent of "7 days ago" and the oldest activation of this reel's automations
     const sinces = autos.filter((a) => !a.media_id || a.media_id === mediaId).map((a) => parseDbTime(a.since)).filter((t) => !Number.isNaN(t));
     const cutoff = Math.max(now - SEVEN_DAYS, sinces.length ? Math.min(...sinces) : 0);
@@ -78,16 +72,15 @@ async function pollChannel(d, ch, now) {
       .filter((c) => now - parseMetaTime(c.timestamp) <= SEVEN_DAYS)
       .sort((a, b) => parseMetaTime(a.timestamp) - parseMetaTime(b.timestamp)); // oldest first
     for (const c of comments) {
-      if (launchedTotal >= MAX_PER_CYCLE || budget <= 0 || throttle.until > Date.now()) break;
+      if (launchedTotal >= MAX_PER_CYCLE || sendingPaused()) break;
       const launched = handleComment(
         ch,
         { id: c.id, text: c.text, timestamp: c.timestamp, username: c.username,
-          from: { id: c.from?.id ?? c.username, username: c.from?.username ?? c.username }, media: { id: mediaId } },
+          from: { id: c.from?.id, username: c.from?.username ?? c.username }, media: { id: mediaId } },
         { sender: d.makeSender(ch.host, ch.token, ch.ig_user_id, ch.type), quiet: true },
       );
       if (!launched.length) continue;
       launchedTotal += launched.length;
-      budget -= launched.length;
       await Promise.all(launched.map((l) => l.done));
       status.totalSent += launched.length;
       await d.pause();
@@ -99,7 +92,7 @@ async function pollChannel(d, ch, now) {
 export async function pollOnce(deps = {}) {
   const d = { ...defaults, ...deps };
   const now = deps.now ?? Date.now();
-  if (throttle.until > now) return 0; // Meta asked for a pause
+  if (sendingPaused()) return 0; // Meta asked for a pause
   let total = 0;
   const channels = all("SELECT * FROM channels WHERE token IS NOT NULL AND ig_user_id NOT LIKE 'demo_%'");
   for (const ch of channels) {
@@ -122,7 +115,7 @@ export function startPoller(intervalSec = 60) {
   status.intervalSec = intervalSec;
   // DM reading for email capture: every 30 s, and it only works if someone is waiting (otherwise it queries nothing)
   const dmTick = async () => {
-    if (dmRunning || (!captureCounts().waiting && !captureCounts().gotEmail)) return;
+    if (sendingPaused() || dmRunning || (!captureCounts().waiting && !captureCounts().gotEmail)) return;
     dmRunning = true;
     try { await pollDMs(); } catch (e) { logEvent('error', `Reading DMs failed: ${e.message}`); } finally { dmRunning = false; }
   };
