@@ -4,9 +4,11 @@
 // Meta only lets you write to someone within 24 h of their last message: exactly what we use.
 import { all, get, run, logEvent } from './db.mjs';
 import { apiFor } from './platform.mjs';
-import { fill, json, addTag, isRateLimit, isBlocked, throttle, parseMetaTime, withUtm, DEFAULT_RETRY } from './engine.mjs';
+import { fill, json, addTag, isRateLimit, isBlocked, sendingPaused, pauseForMeta, parseMetaTime, withUtm, DEFAULT_RETRY } from './engine.mjs';
 
 const EXPIRE_DAYS = 3;          // if they do not answer in 3 days, stop watching
+const FOLLOWUP_WINDOW = 24 * 3_600_000;
+const withinFollowupWindow = (lastMessageAt) => Date.now() - Date.parse(lastMessageAt) < FOLLOWUP_WINDOW;
 const MAX_LOOKUPS = 10;         // individual lookups per cycle (Meta: 2 calls/second per account)
 const MAX_RESOURCES = 20;       // resources sent per cycle and account
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -43,22 +45,24 @@ function saveEmail(capture, automation, email) {
 
 // Sends the resource (final DM). Returns true if it went out or is definitively settled.
 async function sendResource(d, ch, capture, automation) {
-  if (throttle.until > Date.now()) return false; // Meta asked for a pause: retry on the next cycle
+  if (sendingPaused() || !get('SELECT 1 FROM automations WHERE id=? AND active=1', automation.id)) return false;
+  if (!withinFollowupWindow(capture.last_msg_at)) {
+    run("UPDATE captures SET status='expired', error='The Instagram messaging window closed' WHERE id=?", capture.id);
+    return true;
+  } // Meta asked for a pause: retry on the next cycle
   const vars = { username: capture.username || '', first_name: capture.username || '' };
   const text = withUtm(fill(automation.dm_text, vars), automation, ch.type);
   const buttonUrl = withUtm(automation.button_url, automation, ch.type);
   try {
     if (automation.button_url) {
       try { await d.sendButton(ch, capture.igsid, text, automation.button_title || 'Abrir', buttonUrl); }
-      catch (e) { if (isRateLimit(e) || isBlocked(e)) throw e; await d.sendText(ch, capture.igsid, `${text}\n${buttonUrl}`); }
+      catch (e) { if (e.code !== 100 || isRateLimit(e) || isBlocked(e) || sendingPaused() || !withinFollowupWindow(capture.last_msg_at)) throw e; await d.sendText(ch, capture.igsid, `${text}\n${buttonUrl}`); }
     } else {
       await d.sendText(ch, capture.igsid, text);
     }
   } catch (e) {
     if (isRateLimit(e) || isBlocked(e)) {
-      const minutes = isBlocked(e) ? 60 : 10;
-      throttle.until = Date.now() + minutes * 60000; throttle.reason = e.message;
-      logEvent('error', `Meta paused sending (${e.message}). Pausing ${minutes} min; the resource is sent later.`);
+      pauseForMeta(e);
       return false;
     }
     run("UPDATE captures SET status='failed', error=? WHERE id=?", e.message, capture.id);
@@ -84,12 +88,13 @@ async function handleReply(d, ch, capture, automation, msgs) {
   const fresh = newUserMessages(msgs, ch.ig_user_id, Date.parse(capture.last_msg_at));
   if (!fresh.length) return;
   const lastAt = new Date(parseMetaTime(fresh[fresh.length - 1].created_time)).toISOString();
+  if (!withinFollowupWindow(lastAt) || sendingPaused()) return;
   // If any of their new messages contains an email, use it (even if they wrote something else first).
   const hit = fresh.map((m) => extractEmail(m.message)).find(Boolean);
   if (hit) {
     saveEmail(capture, automation, hit);
     run("UPDATE captures SET status='got_email', email=?, last_msg_at=? WHERE id=?", hit, lastAt, capture.id);
-    capture.status = 'got_email'; capture.email = hit;
+    capture.status = 'got_email'; capture.email = hit; capture.last_msg_at = lastAt;
     await sendResource(d, ch, capture, automation);
     return;
   }
@@ -101,7 +106,7 @@ async function handleReply(d, ch, capture, automation, msgs) {
       const mark = new Date(Math.max(Date.now(), Date.parse(lastAt))).toISOString();
       run('UPDATE captures SET retries=retries+1, last_msg_at=? WHERE id=?', mark, capture.id);
     } catch (e) {
-      if (isRateLimit(e) || isBlocked(e)) { throttle.until = Date.now() + 10 * 60000; throttle.reason = e.message; return; }
+      if (isRateLimit(e) || isBlocked(e)) { pauseForMeta(e); return; }
       run("UPDATE captures SET status='failed', error=? WHERE id=?", e.message, capture.id);
       logEvent('error', `Could not ask @${capture.username} for the email again: ${e.message}`);
     }
@@ -111,6 +116,7 @@ async function handleReply(d, ch, capture, automation, msgs) {
 }
 
 export async function pollDMs(deps = {}) {
+  if (sendingPaused()) return 0;
   const d = { ...defaults, ...deps };
   run(`UPDATE captures SET status='expired', error='Did not reply in time' WHERE status='waiting' AND created_at < datetime('now','-${EXPIRE_DAYS} days')`);
   const open = all("SELECT * FROM captures WHERE status IN ('waiting','got_email') ORDER BY id");
@@ -134,7 +140,7 @@ export async function pollDMs(deps = {}) {
       let sent = 0;
       for (const cap of caps.filter((c) => c.status === 'got_email')) {
         if (sent >= MAX_RESOURCES) break;
-        const a = get('SELECT * FROM automations WHERE id=?', cap.automation_id);
+        const a = get('SELECT * FROM automations WHERE id=? AND active=1', cap.automation_id);
         if (a && await sendResource(dd, ch, cap, a)) { sent++; handled++; }
       }
       // 2) people who have not answered yet: a single call brings everyone's recent conversations
@@ -149,7 +155,7 @@ export async function pollDMs(deps = {}) {
       }
       let lookups = 0;
       for (const cap of waiting) {
-        const a = get('SELECT * FROM automations WHERE id=?', cap.automation_id);
+        const a = get('SELECT * FROM automations WHERE id=? AND active=1', cap.automation_id);
         if (!a) continue;
         let msgs = byUser.get(String(cap.igsid));
         if (!msgs && lookups < MAX_LOOKUPS) { // not in the recent list: ask for that person

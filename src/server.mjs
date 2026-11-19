@@ -1,49 +1,91 @@
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, chmodSync } from 'node:fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const envPath = join(root, '.env');
+const envPath = process.env.ENV_FILE || join(root, '.env');
 
 // --- minimal .env loader (no dependencies) ---
 function loadEnv() {
   if (!existsSync(envPath)) return;
-  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/).reverse()) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
 }
 loadEnv();
+process.umask(0o077);
 function ensureEnv(key, value) {
   if (process.env[key]) return;
   process.env[key] = value;
-  writeFileSync(envPath, (existsSync(envPath) ? readFileSync(envPath, 'utf8').replace(/\s*$/, '\n') : '') + `${key}=${value}\n`);
+  writeFileSync(envPath, (existsSync(envPath) ? readFileSync(envPath, 'utf8').replace(/\s*$/, '\n') : '') + `${key}=${value}\n`, { mode: 0o600 });
 }
 ensureEnv('DASHBOARD_PASSWORD', randomBytes(9).toString('base64url'));
 ensureEnv('WEBHOOK_VERIFY_TOKEN', randomBytes(12).toString('base64url'));
+const { all, get, run, logEvent } = await import('./db.mjs');
+const { sealToken, openToken, assertTokenKey, TOKEN_PREFIX } = await import('./tokens.mjs');
+const fatal = (msg) => { console.error(`\nDMLand cannot start: ${msg}\n`); process.exit(1); };
 
-const { db, all, get, run, logEvent } = await import('./db.mjs');
+// The key can come from a file (e.g. a Docker secret) so it never sits next to the database.
+if (!process.env.TOKEN_ENCRYPTION_KEY && !process.env.TOKEN_ENCRYPTION_KEY_FILE) {
+  // Never generate a new key over tokens sealed with an old one: they could not be read anymore.
+  if (get('SELECT 1 FROM channels WHERE token LIKE ? LIMIT 1', TOKEN_PREFIX + '%')) {
+    fatal('TOKEN_ENCRYPTION_KEY is missing but the database has encrypted tokens. Restore the original key in .env (or TOKEN_ENCRYPTION_KEY_FILE), or reconnect the accounts after clearing their tokens.');
+  }
+  ensureEnv('TOKEN_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
+}
+if (existsSync(envPath)) chmodSync(envPath, 0o600);
+
+try { assertTokenKey(); } catch (e) { fatal(e.message); }
+for (const channel of all('SELECT id, username, token FROM channels WHERE token IS NOT NULL')) {
+  let plain;
+  try { plain = openToken(channel.token); }
+  catch { fatal(`TOKEN_ENCRYPTION_KEY does not match the stored token of @${channel.username ?? channel.id}. Restore the original key or reconnect the account.`); }
+  if (plain === channel.token) run('UPDATE channels SET token=? WHERE id=?', sealToken(plain), channel.id);
+}
+
 const meta = await import('./meta.mjs');
 const { apiFor } = await import('./platform.mjs');
 const { commentFromWebhook } = await import('./facebook.mjs');
-const { handleComment, realSender, drySender } = await import('./engine.mjs');
+const { handleComment, realSender, drySender, hourlyCap, resumeSending } = await import('./engine.mjs');
 const poller = await import('./poller.mjs');
 const { automationFields } = await import('./automations.mjs');
 const stats = await import('./stats.mjs');
 const { analytics } = await import('./analytics.mjs');
 
+const HOST = process.env.HOST || '127.0.0.1';
+const WEBHOOKS_ENABLED = process.env.WEBHOOKS_ENABLED === 'on';
 const PORT = Number(process.env.PORT || 3000);
+// Host allowlist against DNS rebinding. Add LAN or VPN names/IPs through ALLOWED_HOSTS (comma separated).
+const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]',
+  ...(['0.0.0.0', '::'].includes(HOST) ? [] : [HOST]),
+  ...(process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+const hostAllowed = (req) => {
+  try { return ALLOWED_HOSTS.has(new URL('http://' + (req.headers.host || '')).hostname.toLowerCase()); } catch { return false; }
+};
 const mediaCache = new Map(); // channel -> { at, data }
 const j = (s, d) => { try { return JSON.parse(s); } catch { return d; } };
-const safeEq = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
+const safeEq = (a, b) => { const x = Buffer.from(String(a ?? '')), y = Buffer.from(String(b ?? '')); return x.length === y.length && timingSafeEqual(x, y); };
 
 function send(res, status, body, type = 'application/json') {
   res.writeHead(status, { 'Content-Type': type + '; charset=utf-8' });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
-const readBody = (req) => new Promise((ok, no) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => ok(Buffer.concat(c))); req.on('error', no); });
+async function readBody(req) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+    length += chunk.length;
+    if (length > 256 * 1024) {
+      req.resume();
+      throw Object.assign(new Error('Request body is too large'), { status: 413 });
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
 
 function authed(req) {
   const h = req.headers.authorization || '';
@@ -52,7 +94,7 @@ function authed(req) {
   return safeEq(pass, process.env.DASHBOARD_PASSWORD);
 }
 
-const publicChannel = (c) => ({ ...c, token: c.token ? '••••' + c.token.slice(-4) : null });
+const publicChannel = (c) => ({ ...c, token: c.token ? '••••' + openToken(c.token).slice(-4) : null });
 const aut = (a) => ({ ...a, keywords: j(a.keywords, []), exclude: j(a.exclude, []), public_replies: j(a.public_replies, []) });
 
 // Interface languages: English is built in; every public/lang/<code>.json file adds one more.
@@ -62,7 +104,13 @@ const languages = () => [{ code: 'en', name: 'English' }, ...langCodes().map((co
 
 async function api(req, res, url) {
   const m = req.method, p = url.pathname;
-  const body = ['POST', 'PUT', 'PATCH'].includes(m) ? j((await readBody(req)).toString() || '{}', {}) : {};
+  let body = {};
+  if (['POST', 'PUT', 'PATCH'].includes(m)) {
+    if (req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
+      return send(res, 415, { error: 'Expected application/json' });
+    }
+    body = JSON.parse((await readBody(req)).toString() || '{}');
+  }
   let r;
 
   if (p === '/api/config') return send(res, 200, { verify_token: process.env.WEBHOOK_VERIFY_TOKEN, app_secret_set: !!process.env.META_APP_SECRET });
@@ -107,11 +155,11 @@ async function api(req, res, url) {
         me = await meta.getMe(host, token);
         igId = String(me.user_id || me.id);
       }
-      let sub = 'ok';
-      try { await api.subscribeWebhooks(host, token, igId); } catch (e) { sub = `could not subscribe to webhooks: ${e.message}`; }
+      let sub = 'disabled';
+      if (WEBHOOKS_ENABLED) try { await api.subscribeWebhooks(host, token, igId); sub = 'ok'; } catch (e) { sub = `could not subscribe to webhooks: ${e.message}`; }
       run(`INSERT INTO channels(brand_id, ig_user_id, username, token, host, type) VALUES (?,?,?,?,?,?)
            ON CONFLICT(ig_user_id) DO UPDATE SET token=excluded.token, username=excluded.username, brand_id=excluded.brand_id, host=excluded.host, type=excluded.type, token_saved_at=CURRENT_TIMESTAMP`,
-        Number(body.brand_id), igId, me.username, token, host, type);
+        Number(body.brand_id), igId, me.username, sealToken(token), host, type);
       logEvent('channel', `Connected ${type === 'facebook' ? 'Facebook Page ' : ''}@${me.username} (${igId}); webhooks: ${sub}`);
       return send(res, 200, { ok: true, username: me.username, ig_user_id: igId, platform: type, webhooks: sub });
     }
@@ -137,6 +185,16 @@ async function api(req, res, url) {
       return send(res, 200, { id: Number(r.lastInsertRowid) });
     }
   }
+  if ((mt = p.match(/^\/api\/automations\/(\d+)\/duplicate$/)) && m === 'POST') {
+    // The copy starts paused so two automations never answer the same comment by accident.
+    const src = get('SELECT * FROM automations WHERE id=?', mt[1]);
+    if (!src) return send(res, 404, { error: 'Automation not found' });
+    const cols = ['channel_id', 'media_id', 'match_mode', 'keywords', 'exclude', 'public_replies', 'dm_text', 'button_title', 'button_url', 'tag', 'delay_seconds', 'mode', 'ask_text', 'retry_text', 'skip_known', 'alt_ask_text', 'utm'];
+    r = run(`INSERT INTO automations(name, active, since, ${cols.join(',')}) VALUES (?, 0, datetime('now'), ${cols.map(() => '?').join(',')})`,
+      `${src.name} (copy)`, ...cols.map((c) => src[c]));
+    logEvent('info', `Automation "${src.name}" duplicated (the copy starts paused)`);
+    return send(res, 200, { id: Number(r.lastInsertRowid) });
+  }
   if ((mt = p.match(/^\/api\/automations\/(\d+)$/))) {
     if (m === 'PUT') {
       run(`UPDATE automations SET channel_id=?,name=?,active=?,media_id=?,match_mode=?,keywords=?,exclude=?,public_replies=?,dm_text=?,button_title=?,button_url=?,tag=?,delay_seconds=?,mode=?,ask_text=?,retry_text=?,skip_known=?,alt_ask_text=?,utm=? WHERE id=?`,
@@ -152,6 +210,11 @@ async function api(req, res, url) {
   }
 
   if (p === '/api/poller' && m === 'GET') return send(res, 200, poller.getStatus());
+  if (p === '/api/sending/resume' && m === 'POST') {
+    if (body.confirm !== 'RESUME') return send(res, 400, { error: 'Confirmation required' });
+    resumeSending();
+    return send(res, 200, poller.getStatus());
+  }
   if (p === '/api/analytics' && m === 'GET') return send(res, 200, analytics({ brand: url.searchParams.get('brand'), range: url.searchParams.get('range') || 7 }));
   if (p === '/api/runs' && m === 'GET') return send(res, 200, all(`SELECT r.*, a.name AS automation, a.mode, a.channel_id, ch.brand_id, c.username, cp.status AS capture_status FROM runs r
     JOIN automations a ON a.id=r.automation_id JOIN channels ch ON ch.id=a.channel_id
@@ -191,7 +254,9 @@ async function api(req, res, url) {
     });
     const perBrand = all(`SELECT b.id, b.name, (SELECT COUNT(*) FROM runs r JOIN automations a ON a.id=r.automation_id JOIN channels c2 ON c2.id=a.channel_id
         WHERE c2.brand_id=b.id AND r.status='done' AND date(r.created_at,'localtime') >= date('now','localtime','-6 days')) AS n FROM brands b ORDER BY b.id`);
-    const hourly = all(`SELECT ch.id, COUNT(*) AS n ${base} AND r.status='done' AND r.created_at >= datetime('now','-1 hour') GROUP BY ch.id`, ...bp);
+    const hourly = all(`SELECT ch.id, COUNT(*) AS n FROM reply_attempts r
+      JOIN channels ch ON ch.ig_user_id=r.account_id
+      WHERE r.attempted_at>? ${brandSql} GROUP BY ch.id`, Date.now() - 3_600_000, ...bp);
     return send(res, 200, {
       sentToday: n(`AND r.status='done' ${today}`),
       handledToday: n(today),
@@ -199,7 +264,7 @@ async function api(req, res, url) {
       activeAutomations: all(`SELECT COUNT(*) AS n FROM automations a JOIN channels ch ON ch.id=a.channel_id WHERE a.active=1 ${brandSql}`, ...bp)[0].n,
       emails: all(`SELECT COUNT(*) AS n FROM contacts c JOIN channels ch ON ch.id=c.channel_id WHERE json_extract(c.fields,'$.email') IS NOT NULL ${brandSql}`, ...bp)[0].n,
       series, perBrand,
-      hour: { sent: Math.max(0, ...hourly.map((h) => h.n)), cap: Number(process.env.HOURLY_CAP || 600) }, // the busiest account
+      hour: { sent: Math.max(0, ...hourly.map((h) => h.n)), cap: hourlyCap }, // the busiest account
     });
   }
 
@@ -219,16 +284,16 @@ async function api(req, res, url) {
 }
 
 // --- Meta webhook ---
-function webhook(req, res, url) {
+async function webhook(req, res, url) {
   if (req.method === 'GET') {
     const q = url.searchParams;
-    if (q.get('hub.mode') === 'subscribe' && q.get('hub.verify_token') === process.env.WEBHOOK_VERIFY_TOKEN) {
+    if (q.get('hub.mode') === 'subscribe' && safeEq(q.get('hub.verify_token'), process.env.WEBHOOK_VERIFY_TOKEN)) {
       logEvent('webhook', 'Webhook verification OK');
       return send(res, 200, q.get('hub.challenge') || '', 'text/plain');
     }
     return send(res, 403, 'forbidden', 'text/plain');
   }
-  return readBody(req).then((raw) => {
+  return readBody(req).then(async (raw) => {
     const secret = process.env.META_APP_SECRET;
     const sig = String(req.headers['x-hub-signature-256'] || '');
     if (!secret) { logEvent('error', 'Webhook received but META_APP_SECRET is not set in .env; ignored'); return send(res, 503, 'secret not set', 'text/plain'); }
@@ -236,14 +301,24 @@ function webhook(req, res, url) {
     if (!sig || !safeEq(sig, expected)) { logEvent('error', 'Invalid webhook signature'); return send(res, 401, 'bad signature', 'text/plain'); }
     send(res, 200, 'EVENT_RECEIVED', 'text/plain'); // answer Meta quickly
     const data = j(raw.toString(), {});
-    logEvent('webhook', `Event ${data.object}`, data);
+    logEvent('webhook', `Event ${data.object}`);
     for (const entry of data.entry || []) {
       const channel = get('SELECT * FROM channels WHERE ig_user_id=?', String(entry.id));
       if (!channel) { logEvent('warn', `Event for an unconnected account: ${entry.id}`); continue; }
       for (const ch of entry.changes || []) {
         const sender = () => realSender(channel.host, channel.token, channel.ig_user_id, channel.type);
         if (ch.field === 'comments' && ch.value && !ch.value.parent_id) {
-          handleComment(channel, ch.value, { sender: sender() });
+          const comment = ch.value;
+          if (!comment.timestamp && comment.id) {
+            try {
+              const details = await meta.getComment(channel.host, channel.token, comment.id);
+              comment.timestamp = details.timestamp;
+            } catch (error) {
+              logEvent('warn', 'Could not verify the Instagram comment timestamp: ' + error.message);
+              continue;
+            }
+          }
+          handleComment(channel, comment, { sender: sender() });
         } else if (ch.field === 'feed') { // Facebook Page: new comment on a post
           const comment = commentFromWebhook(ch.value);
           if (comment) handleComment(channel, comment, { sender: sender() });
@@ -256,18 +331,25 @@ function webhook(req, res, url) {
 createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
-    if (url.pathname === '/webhooks/meta') return await webhook(req, res, url);
+    if (url.pathname === '/webhooks/meta') {
+      if (!WEBHOOKS_ENABLED) return send(res, 404, 'Not found', 'text/plain');
+      return await webhook(req, res, url);
+    }
+    if (!hostAllowed(req)) return send(res, 421, 'Host not allowed. Add it to ALLOWED_HOSTS.', 'text/plain');
     if (!authed(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="DMLand"' }); return res.end('Authentication required'); }
+    if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) {
+      return send(res, 403, { error: 'Cross-site requests are forbidden' });
+    }
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/' || url.pathname === '/index.html') return send(res, 200, readFileSync(join(root, 'public', 'index.html')), 'text/html');
     const lang = url.pathname.match(/^\/lang\/([a-z]{2,3}(?:-[A-Za-z]{2,4})?)\.json$/);
     if (lang && langCodes().includes(lang[1])) return send(res, 200, readFileSync(join(LANG_DIR, lang[1] + '.json')));
     send(res, 404, 'Not found', 'text/plain');
   } catch (e) {
-    if (!res.headersSent) send(res, 400, { error: e.message });
+    if (!res.headersSent) send(res, e.status === 413 ? 413 : 400, { error: e.message });
   }
-}).listen(PORT, () => {
-  console.log(`\nDMLand running at http://localhost:${PORT}`);
+}).listen(PORT, HOST, () => {
+  console.log(`\nDMLand running at http://${HOST}:${PORT}`);
   console.log('Username: anything   Password: the DASHBOARD_PASSWORD line in your .env file\n');
   if (process.env.POLL !== 'off') poller.startPoller(Number(process.env.POLL_SECONDS || 60));
   if (process.env.POLL !== 'off') { stats.startStats(); stats.startHeartbeat(); } // daily snapshots + uptime log

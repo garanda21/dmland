@@ -25,7 +25,7 @@ const asker = (igsid) => ({
   privateReplyButton: async (cid, t) => { sent.push(['askb', cid, t]); return { recipient_id: igsid, message_id: 'm' }; },
   replyToComment: async (cid, t) => { sent.push(['pub', cid, t]); return {}; },
 });
-const comment = (id, user, uid) => ({ id, text: 'Montage', username: user, from: { id: uid, username: user }, media: { id: 'M1' } });
+const comment = (id, user, uid, media = 'M1') => ({ id, timestamp: at(0), text: 'Montage', username: user, from: { id: uid, username: user }, media: { id: media } });
 const comentar = async (c, igsid) => { const l = handleComment(ch, c, { sender: asker(igsid), instant: true }); await Promise.all(l.map((x) => x.done)); return l.length; };
 const at = (msFromNow) => new Date(Date.now() + msFromNow).toISOString().replace('Z', '+0000');
 const msg = (from, text, msFromNow) => ({ id: 'x' + Math.random(), from: { id: from }, message: text, created_time: at(msFromNow) });
@@ -77,7 +77,7 @@ assert.equal(all("SELECT note FROM events WHERE note LIKE '%ana@test.com%'").len
 
 // 5) If we already have their email: the resource goes out directly, without asking again
 sent.length = 0;
-assert.equal(await comentar(comment('C2', 'ana', 'U1'), 'U1'), 1);
+assert.equal(await comentar(comment('C2', 'ana', 'U1', 'M2'), 'U1'), 1);
 assert.equal(sent[0][0], 'ask'); // it is the private DM, but with the resource
 assert.ok(sent[0][2].includes('https://x.com/r'), 'sends the resource directly');
 assert.equal(all("SELECT * FROM captures WHERE igsid='U1'").length, 1, 'does not create another capture');
@@ -123,9 +123,20 @@ assert.equal(get("SELECT status FROM captures WHERE igsid='U5'").status, 'failed
 run(`INSERT INTO automations(channel_id,name,keywords,dm_text,delay_seconds,since,mode) VALUES (1,'Direct','["direct"]','direct link',0, datetime('now','-1 hour'),'link')`);
 sent.length = 0;
 const before = all('SELECT * FROM captures').length;
-const l = handleComment(ch, { id: 'C7', text: 'directo', username: 'zz', from: { id: 'U9', username: 'zz' }, media: { id: 'M1' } }, { sender: asker('U9'), instant: true });
+const l = handleComment(ch, { id: 'C7', timestamp: at(0), text: 'directo', username: 'zz', from: { id: 'U9', username: 'zz' }, media: { id: 'M1' } }, { sender: asker('U9'), instant: true });
 await Promise.all(l.map((x) => x.done));
 assert.equal(sent[0][2], 'direct link');
 assert.equal(all('SELECT * FROM captures').length, before);
+
+// Pending resources and delayed replies must expire locally without calling the Send API.
+await comentar(comment('C8', 'old', 'U10'), 'U10');
+await comentar(comment('C9', 'queued', 'U11'), 'U11');
+run("UPDATE captures SET last_msg_at=? WHERE igsid='U10'", at(-26 * 3_600_000));
+run("UPDATE captures SET status='got_email', last_msg_at=? WHERE igsid='U11'", at(-25 * 3_600_000));
+out.length = 0;
+await pollDMs(deps([conv(msg('U10', 'old@sample.test', -25 * 3_600_000))]));
+assert.equal(out.length, 0);
+assert.equal(get("SELECT status FROM captures WHERE igsid='U11'").status, 'expired');
+assert.equal(get("SELECT email FROM captures WHERE igsid='U10'").email, null);
 
 console.log('OK: email capture tests passed');

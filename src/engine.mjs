@@ -1,4 +1,4 @@
-import { all, get, run, logEvent } from './db.mjs';
+import { all, get, run, logEvent, debugLog } from './db.mjs';
 import { apiFor } from './platform.mjs';
 
 const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -89,38 +89,99 @@ export const parseDbTime = (s) => (s ? Date.parse(String(s).replace(' ', 'T') + 
 
 // quiet: does not log "duplicate" events (used by the periodic read, which checks the same comments every minute)
 export function handleComment(channel, comment, { sender, dry = false, instant = false, quiet = false } = {}) {
-  if (!dry && throttle.until > Date.now()) return []; // Meta asked for a pause: nothing is sent until it ends
+  if (!dry && sendingPaused()) return []; // Meta asked for a pause: nothing is sent until it ends
   const from = comment.from || {};
   if (from.id && String(from.id) === String(channel.ig_user_id)) return []; // ignore our own comments
   if (comment.username && channel.username && comment.username === channel.username) return [];
   if (from.username && channel.username && from.username === channel.username) return [];
   const mediaId = comment.media?.id ? String(comment.media.id) : null;
   const commentTime = parseMetaTime(comment.timestamp);
-  const automations = all('SELECT * FROM automations WHERE channel_id=? AND active=1', channel.id);
+  const automations = all('SELECT * FROM automations WHERE channel_id=? AND active=1 ORDER BY media_id IS NULL, id', channel.id);
   const launched = [];
+  const authorName = from.username || comment.username;
+  const author = from.id ? 'id:' + from.id : authorName ? 'name:' + norm(authorName) : null;
+  const protectedReply = !dry;
+  if (protectedReply && (!comment.id || !mediaId || !author || !validCommentTime(commentTime))) return [];
+  if (protectedReply && !hasReplyBudget(channel.ig_user_id)) return [];
+  if (protectedReply && get(`SELECT 1 FROM runs r
+    JOIN automations a ON a.id=r.automation_id LEFT JOIN contacts c ON c.id=r.contact_id
+    WHERE a.channel_id=? AND r.status<>'dry' AND
+    (r.comment_id=? OR (COALESCE(r.media_id,a.media_id)=? AND
+    (c.external_id=? OR lower(c.username)=?))) LIMIT 1`,
+    channel.id, String(comment.id), mediaId, String(from.id ?? ''), norm(authorName))) return [];
   for (const a of automations) {
     if (a.media_id && a.media_id !== mediaId) continue;
     // Only new comments: later than the moment the automation was activated
     const since = parseDbTime(a.since);
     if (!Number.isNaN(commentTime) && !Number.isNaN(since) && commentTime < since) continue;
     if (!matches(a, comment.text)) continue;
+    if (protectedReply && !run(`INSERT OR IGNORE INTO reply_claims(account_id,comment_id,media_id,author)
+      VALUES (?,?,?,?)`, channel.ig_user_id, String(comment.id), mediaId, author).changes) break;
     const ins = run(`INSERT OR IGNORE INTO runs(automation_id, comment_id, comment_text, status, comment_at, media_id) VALUES (?,?,?,?,?,?)`,
       a.id, String(comment.id), comment.text ?? '', dry ? 'dry' : 'pending',
       new Date(Number.isNaN(commentTime) ? Date.now() : commentTime).toISOString(), mediaId);
     if (ins.changes === 0) { if (!quiet) logEvent('duplicate', `Comment ${comment.id} already processed by "${a.name}"`); continue; }
     const runId = Number(ins.lastInsertRowid);
-    const contact = upsertContact(channel.id, String(from.id ?? 'unknown'), from.username);
+    const contact = upsertContact(channel.id, String(from.id ?? authorName ?? 'unknown'), authorName);
     run('UPDATE runs SET contact_id=? WHERE id=?', contact.id, runId);
-    const p = execute({ a, channel, comment, contact, runId, sender, instant });
+    const p = execute({ a, channel, comment, contact, runId, sender, instant, dry });
     launched.push({ run_id: runId, automation: a.name, done: p });
+    if (protectedReply) break;
   }
   return launched;
 }
 
 // Meta limits: 750 private replies per hour per account. If Meta slows or blocks us, we pause ALL sending.
 export const throttle = { until: 0, reason: '' };
-export const isRateLimit = (e) => [4, 17, 32, 613].includes(e.code) || /rate limit|too many|request limit/i.test(e.message || '');
-export const isBlocked = (e) => e.code === 368 || /temporarily blocked|restricted|spam/i.test(e.message || '');
+{ // restore a rate-limit pause that was still running when the process stopped
+  const saved = get('SELECT until, reason FROM sending_pause WHERE id=1');
+  if (saved && saved.until > Date.now()) { throttle.until = saved.until; throttle.reason = saved.reason; }
+}
+
+// Clears a manual stop (and any running pause). Called from the dashboard after the user reviewed the account.
+export function resumeSending() {
+  run('DELETE FROM sending_stop WHERE id=1');
+  run('DELETE FROM sending_pause WHERE id=1');
+  throttle.until = 0; throttle.reason = '';
+  logEvent('info', 'Sending resumed manually from the dashboard.');
+}
+export const isRateLimit = (e) => [4, 17, 32, 613].includes(e.code) || e.status === 429 || /rate limit|too many|request limit/i.test(e.message || '');
+// Only Meta's explicit block signals stop all sending. A bare "restricted" (e.g. a permission error) does not.
+export const isBlocked = (e) => e.code === 368 || /temporarily blocked|action (?:is |was )?blocked|spam/i.test(e.message || '');
+
+// Instagram allows roughly 200 automated DMs per hour per account: never configure above that.
+export const MAX_HOURLY_CAP = 200;
+const configuredCap = Number(process.env.HOURLY_CAP || 60);
+export const hourlyCap = Number.isInteger(configuredCap) && configuredCap > 0 ? Math.min(configuredCap, MAX_HOURLY_CAP) : 60;
+const validCommentTime = (time) => Number.isFinite(time) && time <= Date.now() + 60_000 && Date.now() - time < 7 * 86_400_000;
+export const sendingRestriction = () => get('SELECT reason FROM sending_stop WHERE id=1')?.reason ?? null;
+export const sendingPaused = () => throttle.until > Date.now() || sendingRestriction() !== null;
+
+export function pauseForMeta(error) {
+  if (isBlocked(error)) {
+    run('INSERT OR IGNORE INTO sending_stop(id, reason) VALUES (1,?)', error.message);
+    logEvent('error', 'Meta paused sending after a restriction. Review the account and resume manually.');
+  } else if (isRateLimit(error)) {
+    throttle.until = Date.now() + 10 * 60_000;
+    throttle.reason = error.message;
+    // Persist the pause so a restart (or a crash loop) does not hit Meta again before it ends.
+    run('INSERT OR REPLACE INTO sending_pause(id, until, reason) VALUES (1,?,?)', throttle.until, error.message);
+    logEvent('error', 'Meta paused sending due to a rate limit. Pausing for 10 minutes.');
+  }
+}
+
+export function hasReplyBudget(accountId) {
+  return get('SELECT COUNT(*) AS n FROM reply_attempts WHERE account_id=? AND attempted_at>?',
+    accountId, Date.now() - 3_600_000).n < hourlyCap;
+}
+
+function reserveReply(accountId) {
+  const now = Date.now(), cutoff = now - 3_600_000;
+  run('DELETE FROM reply_attempts WHERE attempted_at <= ?', cutoff);
+  return run(`INSERT INTO reply_attempts(account_id,attempted_at) SELECT ?,?
+    WHERE (SELECT COUNT(*) FROM reply_attempts WHERE account_id=? AND attempted_at>?) < ?`,
+    accountId, now, accountId, cutoff, hourlyCap).changes > 0;
+}
 
 // Records that we asked this person for their email: from here on the program watches their DMs.
 function createCapture({ a, channel, contact, comment, runId, resp }) {
@@ -131,10 +192,29 @@ function createCapture({ a, channel, contact, comment, runId, resp }) {
     a.id, channel.id, contact.id, runId, igsid, contact.username ?? null, 'waiting', now, now);
 }
 
-async function execute({ a, channel, comment, contact, runId, sender, instant }) {
+async function execute({ a, channel, comment, contact, runId, sender, instant, dry }) {
   const vars = { username: contact.username || '', first_name: contact.username || '' };
   try {
     if (!instant && a.delay_seconds > 0) await sleep(a.delay_seconds * 1000);
+
+    // Frees the comment so it is retried later. The reply_attempts row is kept on purpose:
+    // an attempt that Meta throttled or blocked still counts against the hourly cap.
+    const release = () => {
+      run('DELETE FROM reply_claims WHERE account_id=? AND comment_id=?', channel.ig_user_id, String(comment.id));
+      run('DELETE FROM runs WHERE id=?', runId);
+    };
+    if (!dry && (sendingPaused() || !get('SELECT 1 FROM automations WHERE id=? AND active=1', a.id))) {
+      release();
+      return;
+    }
+    if (!dry && !validCommentTime(parseMetaTime(comment.timestamp))) {
+      run("UPDATE runs SET status='error', error='Comment is outside the private reply window' WHERE id=?", runId);
+      return;
+    }
+    if (!dry && !reserveReply(channel.ig_user_id)) {
+      release();
+      return;
+    }
     // Email mode: if we already have their email (and the automation allows it) the resource goes out directly; otherwise we ask for the email.
     const knownEmail = a.mode === 'email' && a.skip_known ? emailOf(contact) : null;
     const askMode = a.mode === 'email' && !knownEmail;
@@ -149,7 +229,12 @@ async function execute({ a, channel, comment, contact, runId, sender, instant })
     try {
       if (a.button_url && !askMode) {
         try { resp = await sender.privateReplyButton(comment.id, text, a.button_title || 'Abrir', buttonUrl); }
-        catch (e) { if (isRateLimit(e) || isBlocked(e)) throw e; logEvent('warn', `Button failed (${e.message}); sending text with the link`); resp = await sender.privateReplyText(comment.id, `${text}\n${buttonUrl}`); }
+        catch (e) {
+          if (e.code !== 100 || isRateLimit(e) || isBlocked(e)) throw e;
+          if (!dry && (sendingPaused() || !validCommentTime(parseMetaTime(comment.timestamp)) || !reserveReply(channel.ig_user_id))) throw e;
+          logEvent('warn', `Button failed (${e.message}); sending text with the link`);
+          resp = await sender.privateReplyText(comment.id, `${text}\n${buttonUrl}`);
+        }
       } else {
         resp = await sender.privateReplyText(comment.id, text);
       }
@@ -157,13 +242,10 @@ async function execute({ a, channel, comment, contact, runId, sender, instant })
         String(resp?.recipient_id ?? comment.from?.id ?? '') || null, runId);
       if (askMode && !resp?.dry) createCapture({ a, channel, contact, comment, runId, resp });
     } catch (e) {
-      if (isRateLimit(e) || isBlocked(e)) {
-        // Not marked as an error: the run is deleted so it is retried when the pause ends.
-        const minutes = isBlocked(e) ? 60 : 10;
-        throttle.until = Date.now() + minutes * 60000;
-        throttle.reason = e.message;
-        run('DELETE FROM runs WHERE id=?', runId);
-        logEvent('error', `Meta paused sending (${e.message}). Pausing ${minutes} min; the comment is retried later.`);
+      // Blocked or rate limited: stop sending and keep the comment, so it is retried after the pause or a manual resume.
+      if (isBlocked(e) || isRateLimit(e)) {
+        pauseForMeta(e);
+        release();
         return;
       }
       run('UPDATE runs SET dm_status=?, status=?, error=? WHERE id=?', 'error', 'error', e.message, runId);
@@ -171,10 +253,10 @@ async function execute({ a, channel, comment, contact, runId, sender, instant })
       return;
     }
     const replies = json(a.public_replies, []).filter(Boolean);
-    if (replies.length) {
+    if (replies.length && (dry || !sendingPaused())) {
       const msg = fill(replies[Math.floor(Math.random() * replies.length)], vars);
       try { await sender.replyToComment(comment.id, msg); run('UPDATE runs SET public_reply_status=? WHERE id=?', 'ok', runId); }
-      catch (e) { run('UPDATE runs SET public_reply_status=? WHERE id=?', `error: ${e.message}`, runId); logEvent('error', `Public reply failed: ${e.message}`); }
+      catch (e) { pauseForMeta(e); run('UPDATE runs SET public_reply_status=? WHERE id=?', `error: ${e.message}`, runId); logEvent('error', `Public reply failed: ${e.message}`); }
     }
     addTag(contact, a.tag);
     run(`UPDATE runs SET status=CASE WHEN status='dry' THEN 'dry' ELSE 'done' END WHERE id=?`, runId);

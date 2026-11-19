@@ -65,7 +65,7 @@ export async function collectStats(deps = {}) {
         }
         lastErr.delete('in' + ch.id);
       } catch (e) { if (lastErr.get('in' + ch.id) !== e.message) logEvent('warn', `Could not read insights of @${ch.username}: ${e.message}`); lastErr.set('in' + ch.id, e.message); }
-      try { saveFollowups(ch, (await d.listConversations(ch.host, ch.token, ch.ig_user_id, 50, ch.type)).data); }
+      if (process.env.INBOX_ANALYTICS === 'on') try { saveFollowups(ch, (await d.listConversations(ch.host, ch.token, ch.ig_user_id, 50, ch.type)).data); }
       catch (e) { if (lastErr.get('dm' + ch.id) !== e.message) logEvent('warn', `Could not read DMs of @${ch.username}: ${e.message}`); lastErr.set('dm' + ch.id, e.message); }
       lastErr.delete(ch.id);
       done++;

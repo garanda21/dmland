@@ -72,6 +72,32 @@ CREATE TABLE IF NOT EXISTS runs (
   UNIQUE(automation_id, comment_id)
 );
 
+CREATE TABLE IF NOT EXISTS reply_claims (
+  account_id TEXT NOT NULL,
+  comment_id TEXT NOT NULL,
+  media_id TEXT NOT NULL,
+  author TEXT NOT NULL,
+  PRIMARY KEY (account_id, comment_id),
+  UNIQUE (account_id, media_id, author)
+);
+
+CREATE TABLE IF NOT EXISTS reply_attempts (
+  account_id TEXT NOT NULL,
+  attempted_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reply_attempts_time ON reply_attempts(attempted_at);
+
+CREATE TABLE IF NOT EXISTS sending_pause (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  until INTEGER NOT NULL,
+  reason TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sending_stop (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  reason TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -173,7 +199,21 @@ export const all =(sql, ...p) => db.prepare(sql).all(...p);
 export const get = (sql, ...p) => db.prepare(sql).get(...p);
 export const run = (sql, ...p) => db.prepare(sql).run(...p);
 
+// Container logs (stdout). LOG_LEVEL: debug | info (default) | warn | error | off.
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, off: 99 };
+const minLevel = LEVELS[String(process.env.LOG_LEVEL || 'info').toLowerCase()] ?? LEVELS.info;
+const levelOf = (kind) => (kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : ['duplicate', 'webhook'].includes(kind) ? 'debug' : 'info');
+function writeLog(level, kind, note) {
+  if (LEVELS[level] < minLevel || process.env.NODE_TEST_CONTEXT) return;
+  const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${kind}] ${note ?? ''}`;
+  (level === 'error' || level === 'warn' ? console.error : console.log)(line);
+}
+
+// Detail that only matters while debugging: printed with LOG_LEVEL=debug, never stored in the database.
+export const debugLog = (kind, note) => writeLog('debug', kind, note);
+
 export function logEvent(kind, note, payload) {
+  writeLog(levelOf(kind), kind, note);
   run('INSERT INTO events(kind, note, payload) VALUES (?,?,?)', kind, note ?? null,
     payload === undefined ? null : JSON.stringify(payload).slice(0, 4000));
 }

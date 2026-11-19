@@ -1,3 +1,5 @@
+import { openToken } from './tokens.mjs';
+
 // Minimal Instagram API client.
 // host = 'graph.facebook.com'  -> Unified Login (system user token, the one we use)
 // host = 'graph.instagram.com' -> Instagram Login (older apps, Instagram token)
@@ -5,9 +7,12 @@ const VERSION = process.env.GRAPH_VERSION || 'v27.0';
 export const DEFAULT_HOST = 'graph.facebook.com';
 
 export async function call(host, method, path, token, body) {
+  if (host !== DEFAULT_HOST && host !== 'graph.instagram.com') throw new Error('Unexpected Meta API host');
   const res = await fetch(`https://${host}/${VERSION}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+    headers: { Authorization: `Bearer ${openToken(token)}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -45,6 +50,9 @@ export const getMedia = (host, token, mediaId) =>
 // `after` is the next page cursor (paging.cursors.after).
 export const listComments = (host, token, mediaId, limit = 50, after = null) =>
   call(host, 'GET', `/${mediaId}/comments?fields=id,text,username,timestamp,from&limit=${limit}${after ? `&after=${encodeURIComponent(after)}` : ''}`, token);
+
+export const getComment = (host, token, commentId) =>
+  call(host, 'GET', `/${encodeURIComponent(commentId)}?fields=timestamp`, token);
 
 // ---- Direct messages (for email capture) ----
 const MSG_FIELDS = 'id,updated_time,messages.limit(8){id,created_time,from,message}';

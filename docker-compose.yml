@@ -1,0 +1,27 @@
+services:
+  dmland:
+    build: .
+    image: dmland:local
+    container_name: dmland
+    restart: unless-stopped
+    # Published on the host loopback only. Reach it through a VPN (Tailscale/WireGuard)
+    # or a private HTTPS reverse proxy; never expose port 3000 to the internet.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      TZ: Europe/Madrid
+      # Add the LAN/VPN host or IP you use to open the dashboard (Host header allowlist).
+      ALLOWED_HOSTS: ""
+      HOURLY_CAP: "30"
+      WEBHOOKS_ENABLED: "off"
+      INBOX_ANALYTICS: "off"
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

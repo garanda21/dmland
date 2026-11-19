@@ -1,6 +1,10 @@
 {
  "name": "Español",
  "dict": {
+  "Sending stopped by Meta": "Envíos detenidos por Meta",
+  "Resume sending": "Reanudar envíos",
+  "Meta restricted this account. Review it in Meta (Account Status) before resuming. Sending again too early can make the restriction longer.": "Meta restringió esta cuenta. Revísala en Meta (Estado de la cuenta) antes de reanudar. Volver a enviar demasiado pronto puede alargar la restricción.",
+  "Sending resumed": "Envíos reanudados",
   "today": "hoy",
   "the last 7 days": "los últimos 7 días",
   "the last 30 days": "los últimos 30 días",
@@ -236,6 +240,8 @@
   "Brand name": "Nombre de la marca",
   "A/B test active": "Prueba A/B activa",
   "Test without sending": "Probar sin enviar",
+  "Duplicate": "Duplicar",
+  "Duplicated. The copy is paused until you activate it.": "Duplicada. La copia está en pausa hasta que la actives.",
   "Public reply": "Respuesta pública",
   "Couldn't send": "No se pudo enviar",
   "Create demo account": "Crear cuenta demo",

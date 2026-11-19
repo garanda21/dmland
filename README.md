@@ -66,6 +66,18 @@ On first run DMLand creates a `.env` file with a random dashboard password. Open
 npm run demo    # http://localhost:3100, password: demo
 ```
 
+## Run with Docker
+
+```sh
+mkdir -p data config && sudo chown 1000:1000 data config   # the container runs as the "node" user (uid 1000)
+docker compose up -d --build
+docker compose exec dmland cat /config/.env               # dashboard password and generated keys
+```
+
+The dashboard listens on `127.0.0.1:3000` of the host only. Reach it through a VPN or a private HTTPS reverse proxy.
+`data/` holds SQLite and `config/` holds `.env` with the token encryption key: back them up separately.
+To keep the key out of `config/`, mount it as a Docker secret and set `TOKEN_ENCRYPTION_KEY_FILE`.
+
 ## Connect Instagram or a Facebook Page
 
 DMLand uses your own Meta app (free, about 15 minutes, no Meta review needed for your own account).
@@ -83,8 +95,8 @@ The agent follows [AGENTS.md](AGENTS.md): it asks your language, installs and st
 
 | Limit | Value |
 |---|---|
-| Replies per hour per Instagram account | Meta allows about 750. DMLand stays at 600. |
-| Replies per hour per Facebook Page | Meta publishes no number. DMLand uses the same 600 cap. |
+| Replies per hour per Instagram account | Meta allows about 750. DMLand defaults to 60 private reply attempts per hour. |
+| Replies per hour per Facebook Page | Meta publishes no number. DMLand uses the same default of 60 attempts per hour. |
 | Comment age | Only comments under 7 days old can get a DM (both platforms). |
 | One DM per comment | A comment is answered once. |
 | Message size | 1000 bytes per DM. |
