@@ -228,8 +228,8 @@ function areaChart(series, keys) { // keys: [[field, color1, color2, label]]
   const top = niceTop(Math.max(5, ...series.map((s) => Math.max(...keys.map((k) => s[k[0]])))));
   const x = (i) => pl + ((W - pl - pr) * i) / Math.max(1, series.length - 1), y = (v) => H - pb - ((H - pb - pt) * v) / top;
   let g = `<defs>${keys.map((k, i) => `<linearGradient id="ar${id}_${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${k[1]}" stop-opacity=".55"/><stop offset="1" stop-color="${k[1]}" stop-opacity="0"/></linearGradient>`).join('')}</defs>`;
-  for (let i = 0; i <= 2; i++) { const yy = y((top * i) / 2); g += `<line x1="${pl}" x2="${W - pr}" y1="${yy}" y2="${yy}" stroke="#dedbd2"/><text x="${pl - 8}" y="${yy + 4}" text-anchor="end" fill="#63685d" font-size="12">${top * i / 2}</text>`; }
-  series.forEach((s, i) => { if (i % 7 === 0 || (i === series.length - 1 && (series.length - 1) % 7 >= 3)) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" fill="#63685d" font-size="12">${s.date.slice(8)}/${s.date.slice(5, 7)}</text>`; });
+  for (let i = 0; i <= 2; i++) { const yy = y((top * i) / 2); g += `<line x1="${pl}" x2="${W - pr}" y1="${yy}" y2="${yy}" stroke="#3f343f"/><text x="${pl - 8}" y="${yy + 4}" text-anchor="end" fill="#b2a79e" font-size="12">${top * i / 2}</text>`; }
+  series.forEach((s, i) => { if (i % 7 === 0 || (i === series.length - 1 && (series.length - 1) % 7 >= 3)) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" fill="#b2a79e" font-size="12">${s.date.slice(8)}/${s.date.slice(5, 7)}</text>`; });
   keys.forEach((k, i) => {
     const pts = series.map((s, j) => [x(j), y(s[k[0]])]);
     g += `<path d="${curve(pts)} L${pts.at(-1)[0]},${H - pb} L${pts[0][0]},${H - pb} Z" fill="url(#ar${id}_${i})"/><path d="${curve(pts)}" fill="none" stroke="${k[1]}" stroke-width="3" stroke-linecap="round"/>`;
@@ -237,7 +237,7 @@ function areaChart(series, keys) { // keys: [[field, color1, color2, label]]
   });
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${T('Chart of the last 30 days')}">${g}</svg>`;
 }
-function sparkline(vals, color = '#20584b', w = 150, h = 46) {
+function sparkline(vals, color = '#f6b73f', w = 150, h = 46) {
   const id = ++gid, max = Math.max(1, ...vals), pts = vals.map((v, i) => [(w * i) / Math.max(1, vals.length - 1), h - 4 - ((h - 10) * v) / max]);
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sp${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".5"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     <path d="${curve(pts)} L${w},${h} L0,${h} Z" fill="url(#sp${id})"/><path d="${curve(pts)}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/></svg>`;
@@ -245,23 +245,23 @@ function sparkline(vals, color = '#20584b', w = 150, h = 46) {
 function donut(parts, center, size = 124) { // parts: [{v, color}]
   const r = 44, C = 2 * Math.PI * r, tot = parts.reduce((a, p) => a + p.v, 0) || 1; let off = 0;
   const segs = parts.filter((p) => p.v > 0).map((p) => { const len = (C * p.v) / tot, s = `<circle cx="60" cy="60" r="${r}" fill="none" stroke="${p.color}" stroke-width="14" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 60 60)"/>`; off += len; return s; }).join('');
-  return `<svg viewBox="0 0 120 120" width="${size}" height="${size}" role="img"><circle cx="60" cy="60" r="${r}" fill="none" stroke="#e6e3db" stroke-width="14"/>${segs}<text x="60" y="66" text-anchor="middle" font-size="19" font-weight="800" fill="#262921">${center}</text></svg>`;
+  return `<svg viewBox="0 0 120 120" width="${size}" height="${size}" role="img"><circle cx="60" cy="60" r="${r}" fill="none" stroke="#3f343f" stroke-width="14"/>${segs}<text x="60" y="66" text-anchor="middle" font-size="19" font-weight="800" fill="#f6f1ea">${center}</text></svg>`;
 }
 function heatmap(grid) {
   const max = Math.max(1, ...grid.flat()), names = DAYS(), order = [1, 2, 3, 4, 5, 6, 0];
-  return order.map((d) => `<div class="hm-row"><span class="hm-l">${names[d]}</span>${grid[d].map((n, h) => `<i style="background:rgba(32,88,75,${n ? 0.14 + (0.86 * n) / max : 0.06})" title="${names[d]} ${hour12(h)} · ${n}"></i>`).join('')}</div>`).join('')
+  return order.map((d) => `<div class="hm-row"><span class="hm-l">${names[d]}</span>${grid[d].map((n, h) => `<i style="background:rgba(244,177,63,${n ? 0.14 + (0.86 * n) / max : 0.06})" title="${names[d]} ${hour12(h)} · ${n}"></i>`).join('')}</div>`).join('')
     + `<div class="hm-row hm-ax"><span class="hm-l"></span>${Array.from({ length: 24 }, (_, h) => `<span>${h % 6 === 0 ? h : ''}</span>`).join('')}</div>`;
 }
 function funnelSvg(f) {
   const lab = [T('Comments with keyword'), T('DMs sent'), T('Emails captured'), T('Resources delivered')];
-  const col = [['#20584b', '#20584b'], ['#426b78', '#426b78'], ['#69618a', '#69618a'], ['#825b39', '#825b39']];
+  const col = [['#b16c29', '#b16c29'], ['#3b689d', '#3b689d'], ['#7151b3', '#7151b3'], ['#ad486d', '#ad486d']];
   const max = Math.max(1, ...f.map((s) => s.n)), W = 1000, H = 215, sw = 250, mid = 82, hs = f.map((s) => Math.max(0.3, s.n / max) * 140), id = ++gid;
   let g = `<defs>${col.map((c, i) => `<linearGradient id="fg${id}_${i}" x1="0" x2="1"><stop offset="0" stop-color="${c[0]}"/><stop offset="1" stop-color="${c[1]}"/></linearGradient>`).join('')}</defs>`;
   f.forEach((s, i) => {
     const x0 = i * sw, x1 = x0 + sw, hL = hs[i], hR = i < 3 ? hs[i + 1] : hs[i] * 0.88;
     g += `<path d="M${x0},${mid - hL / 2} L${x1},${mid - hR / 2} L${x1},${mid + hR / 2} L${x0},${mid + hL / 2}Z" fill="url(#fg${id}_${i})"/>
       <text x="${x0 + sw / 2}" y="${mid + 13}" text-anchor="middle" font-size="40" font-weight="800" fill="#fff">${num(s.n)}</text>
-      <text x="${x0 + sw / 2}" y="${H - 22}" text-anchor="middle" font-size="15" font-weight="600" fill="#454a3f">${lab[i]}</text>`;
+      <text x="${x0 + sw / 2}" y="${H - 22}" text-anchor="middle" font-size="15" font-weight="600" fill="#ddd2c7">${lab[i]}</text>`;
     if (i > 0 && s.rate != null) g += `<rect x="${x0 - 27}" y="${mid - 15}" rx="14" width="54" height="30" fill="rgba(22,15,24,.9)" stroke="rgba(255,255,255,.3)"/><text x="${x0}" y="${mid + 6}" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">${s.rate}%</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${T('Funnel: from comments to delivered resources')}">${g}</svg>`;
@@ -279,16 +279,16 @@ const captionOf = (chId, mediaId) => (S.media[chId]?.[mediaId]?.caption || '').r
 const healthDot = (b) => `<i class="dot ${b.errors24h ? 'warn' : ''}" title="${b.errors24h ? T('There were errors in the last 24 h') : T('All good')}"></i>`;
 
 function brandCard(b, i) {
-  const grads = ['var(--g-amber)', 'var(--g-violet)', 'var(--g-blue)', 'var(--g-rose)'], cols = ['#20584b', '#69618a', '#426b78', '#96645d'];
+  const grads = ['var(--g-amber)', 'var(--g-violet)', 'var(--g-blue)', 'var(--g-rose)'], cols = ['#f6b73f', '#9a76f5', '#5ab4f6', '#ee6f8c'];
   return `<div class="bcard "><div class="bhead" style="background:${grads[i % 4]}"><span class="bavatar">${esc(b.name[0].toUpperCase())}</span><b translate="no">${esc(b.name)}</b>${healthDot(b)}</div>
     <div class="bbody"><div class="bnum"><b>${num(b.dms)}</b><span>${T`DMs in ${periodo()}`}</span></div>
     <div class="bspark">${sparkline(b.spark, cols[i % 4])}</div>
-    <div class="bmid"><div class="bring">${donut([{ v: b.deliveredPct ?? 0, color: '#2b6d51' }, { v: 100 - (b.deliveredPct ?? 0), color: '#e6e3db' }], b.deliveredPct == null ? '—' : b.deliveredPct + '%', 84)}<small>${T('delivered')}</small></div>
+    <div class="bmid"><div class="bring">${donut([{ v: b.deliveredPct ?? 0, color: '#4fd08a' }, { v: 100 - (b.deliveredPct ?? 0), color: '#3f343f' }], b.deliveredPct == null ? '—' : b.deliveredPct + '%', 84)}<small>${T('delivered')}</small></div>
       <div class="breel">${b.topReel ? thumbHtml(b.topReel.channel_id, b.topReel.media_id) : '<div class="bthumb"></div>'}<small>${T('Top reel')}</small></div></div>
     <div class="bfoot"><span>✉ ${num(b.emails)} ${T('emails')}</span><span>⚡ ${b.automations} ${T('active')}</span>${b.followers != null ? `<span>👥 ${num(b.followers)}${b.followersDelta ? ` <em class="${b.followersDelta > 0 ? 'up' : 'down'}">${b.followersDelta > 0 ? '+' : ''}${b.followersDelta}</em>` : ''}</span>` : ''}</div></div></div>`;
 }
 
-const reelCard = (r, i) => `<div class="rcard ">${thumbHtml(r.channel_id, r.media_id, 'rcthumb')}<div class="rcbody"><div class="rcn"><i class="dot"></i><b>${num(r.dms)}</b> DMs</div><div class="rcs">${num(r.emails)} Emails${r.likes != null ? ` · ${num(r.likes)} likes` : ''}</div>${r.views != null ? `<div class="rcs">${num(r.views)} ${T('views')}${r.saved != null ? ` · ${num(r.saved)} ${T('saves')}` : ''}</div>` : ''}${r.keyword ? `<span class="kwchip" translate="no">#${esc(r.keyword)}</span>` : ''}<div class="rcsp">${sparkline(r.spark, '#69618a', 90, 28)}</div></div></div>`;
+const reelCard = (r, i) => `<div class="rcard ">${thumbHtml(r.channel_id, r.media_id, 'rcthumb')}<div class="rcbody"><div class="rcn"><i class="dot"></i><b>${num(r.dms)}</b> DMs</div><div class="rcs">${num(r.emails)} Emails${r.likes != null ? ` · ${num(r.likes)} likes` : ''}</div>${r.views != null ? `<div class="rcs">${num(r.views)} ${T('views')}${r.saved != null ? ` · ${num(r.saved)} ${T('saves')}` : ''}</div>` : ''}${r.keyword ? `<span class="kwchip" translate="no">#${esc(r.keyword)}</span>` : ''}<div class="rcsp">${sparkline(r.spark, '#9a76f5', 90, 28)}</div></div></div>`;
 
 // Paints the main content. In "quiet" mode (automatic refresh) it does not wipe the page: it compares with what is already shown and only
 // changes the parts that differ, without replaying the entry animations. That is why it does not flicker.
@@ -343,7 +343,7 @@ async function viewInicio(opts = {}) {
   const reelsBlock = top ? `<div class="reelsec">
       <div class="rbig "><div class="rbt">${T('Top reel')} ${rangeWord}</div>
         <div class="rbm">${thumbHtml(top.channel_id, top.media_id, 'rbthumb')}<div class="rbn"><b>${num(top.dms)}</b><span>DMs</span>${top.keyword ? `<span class="kwchip" translate="no">#${esc(top.keyword)}</span>` : ''}<div class="rbs">${num(top.emails)} Emails${top.likes != null ? ` · ${num(top.likes)} likes` : ''}</div>${top.views != null ? `<div class="rbs">${num(top.views)} ${T('views')} · ${T('reach')} ${num(top.reach)}<br>${num(top.saved)} ${T('saves')} · ${num(top.shares)} ${T('shares')}${top.dmPerView != null ? `<br>${T`${top.dmPerView} DMs per 100 views`}` : ''}</div>` : ''}</div></div>
-        <div class="rbsp">${sparkline(top.spark, '#20584b', 220, 44)}</div></div>
+        <div class="rbsp">${sparkline(top.spark, '#f6b73f', 220, 44)}</div></div>
       <div class="rgrid">${others.slice(0, 6).map(reelCard).join('')}</div></div>`
     : `<div class="card "><p class="mute" style="margin:0">${T('No reels with activity in this period yet. When someone comments the keyword of an automation, it shows up here.')}</p></div>`;
   const kpi = (value, label) => `<div class="kt"><small>${esc(label)}</small><b>${num(value)}</b></div>`;
@@ -375,15 +375,15 @@ async function viewInicio(opts = {}) {
   const html = header('Home', rangePills()) + `
   <div class="kpis">${kpi(t.dms, `${T('DMs')} · ${rangeShort}`)}${kpi(t.emails, `${T('Emails')} · ${rangeShort}`)}${kpi(o.waiting, T('Waiting for a reply'))}${kpi(t.errors, T('Errors'))}</div>
   <div class="trend">
-    <div class="card trend-overview"><h2>${T('Last 30 days')}</h2>${areaChart(a.series30, [['dms', '#20584b'], ['emails', '#69618a']])}
-      <div class="legend"><span><i style="background:#20584b"></i>${T('DMs sent')}</span><span><i style="background:#69618a"></i>${T('Emails captured')}</span></div>
+    <div class="card trend-overview"><h2>${T('Last 30 days')}</h2>${areaChart(a.series30, [['dms', '#f6b73f'], ['emails', '#9a76f5']])}
+      <div class="legend"><span><i style="background:#f6b73f"></i>${T('DMs sent')}</span><span><i style="background:#9a76f5"></i>${T('Emails captured')}</span></div>
       ${recent.length ? `<section class="recent-runs"><h2>Recent activity</h2><ul>${recent.map((r) => `<li><span translate="no">@${esc(r.username || '—')}</span>${stChip(r)}<time datetime="${esc(utc(r.created_at).toISOString())}">${esc(ago(r.created_at))}</time></li>`).join('')}</ul><a href="#/actividad">View activity</a></section>` : ''}</div>
     <div class="trend4">
       <div class="card "><h2>${T('When do people comment?')}</h2><div class="heat">${heatmap(a.heatmap.grid)}</div></div>
-      <div class="card "><h2>${T('Send results')}</h2><div class="don">${donut([{ v: o.sent, color: '#2b6d51' }, { v: o.waiting, color: '#9b6b26' }, { v: o.error, color: '#a13832' }], okPct == null ? '—' : okPct + '%', 96)}
-        <div class="dleg"><span><i style="background:#2b6d51"></i>${T('Sent')} <b>${num(o.sent)}</b></span><span><i style="background:#9b6b26"></i>${T('Waiting')} <b>${num(o.waiting)}</b></span><span><i style="background:#a13832"></i>Error <b>${num(o.error)}</b></span></div></div></div>
-      <div class="card "><h2>${T('Email list')}</h2><div class="lgrow"><b class="lgnum">+${num(lg.week)}</b><span class="mute">${T('this week')}</span></div>${sparkline(lg.cumulative.map((x) => x.total), '#69618a', 200, 46)}<p class="mute" translate="no" style="margin:6px 0 0">${T`${num(lg.total)} emails in total.`}</p></div>
-      <div class="card "><h2>${T('Reach and views')}</h2>${ins.has ? `<div class="lgrow"><b class="lgnum">${num(ins.views)}</b><span class="mute">${T('views')}</span></div>${ins.series.length > 1 ? sparkline(ins.series.map((x) => x.views ?? 0), '#426b78', 200, 46) : ''}<p class="mute" style="margin:6px 0 0">${num(ins.reach)} ${T('accounts reached')}</p>` : `<p class="mute" style="margin:0">${T('No data yet: read every 30 minutes.')}</p>`}</div>
+      <div class="card "><h2>${T('Send results')}</h2><div class="don">${donut([{ v: o.sent, color: '#4fd08a' }, { v: o.waiting, color: '#f4b13f' }, { v: o.error, color: '#ef5b6b' }], okPct == null ? '—' : okPct + '%', 96)}
+        <div class="dleg"><span><i style="background:#4fd08a"></i>${T('Sent')} <b>${num(o.sent)}</b></span><span><i style="background:#f4b13f"></i>${T('Waiting')} <b>${num(o.waiting)}</b></span><span><i style="background:#ef5b6b"></i>Error <b>${num(o.error)}</b></span></div></div></div>
+      <div class="card "><h2>${T('Email list')}</h2><div class="lgrow"><b class="lgnum">+${num(lg.week)}</b><span class="mute">${T('this week')}</span></div>${sparkline(lg.cumulative.map((x) => x.total), '#9a76f5', 200, 46)}<p class="mute" translate="no" style="margin:6px 0 0">${T`${num(lg.total)} emails in total.`}</p></div>
+      <div class="card "><h2>${T('Reach and views')}</h2>${ins.has ? `<div class="lgrow"><b class="lgnum">${num(ins.views)}</b><span class="mute">${T('views')}</span></div>${ins.series.length > 1 ? sparkline(ins.series.map((x) => x.views ?? 0), '#5ab4f6', 200, 46) : ''}<p class="mute" style="margin:6px 0 0">${num(ins.reach)} ${T('accounts reached')}</p>` : `<p class="mute" style="margin:0">${T('No data yet: read every 30 minutes.')}</p>`}</div>
     </div>
   </div>
   <h2 class="sec mt">${T('Your reels')}</h2>
@@ -391,8 +391,8 @@ async function viewInicio(opts = {}) {
   <div class="banner mt"><div class="bn-ic">${ic('chat')}</div><div><div class="bn-t" translate="no">${esc(headline)}</div></div></div>
   <div class="grid g4 mt">
     <div class="tcard "><h3>${T('When do people comment most?')}</h3><div class="hbars">${bk.map((v, i) => `<span class="hb ${v && v === bm ? 'pk' : ''}" style="height:${Math.max(5, (v / bm) * 100)}%" title="${hour12(i * 2)} · ${v}"></span>`).join('')}</div><div class="hbl">${[0, 4, 8, 12, 16, 20].map((h) => `<span>${hour12(h)}</span>`).join('')}</div><p translate="no">${esc(peakLine)}</p></div>
-    <div class="tcard "><h3>${T('How many give their email?')}</h3><div class="don">${donut([{ v: rate ?? 0, color: '#96645d' }, { v: 100 - (rate ?? 0), color: '#e6e3db' }], rate == null ? '—' : rate + '%', 96)}<p translate="no" style="margin:0">${esc(tenth == null ? T('No email data yet') : T`${tenth} out of 10 give their email`)}</p></div></div>
-    <div class="tcard "><h3>${T('Followers')}</h3>${fo.latest != null ? `<div class="lgrow"><b class="lgnum">${num(fo.latest)}</b>${fo.delta ? `<span class="${fo.delta > 0 ? 'up' : 'down'}">${fo.delta > 0 ? '+' : ''}${fo.delta} ${T('in 30 days')}</span>` : ''}</div>${fo.series.length > 1 ? sparkline(fo.series.map((x) => x.f), '#426b78', 200, 46) : `<p>${T('The chart appears with more days of data.')}</p>`}` : `<p>${T('No data yet: a daily snapshot is taken.')}</p>`}</div>
+    <div class="tcard "><h3>${T('How many give their email?')}</h3><div class="don">${donut([{ v: rate ?? 0, color: '#ee6f8c' }, { v: 100 - (rate ?? 0), color: '#3f343f' }], rate == null ? '—' : rate + '%', 96)}<p translate="no" style="margin:0">${esc(tenth == null ? T('No email data yet') : T`${tenth} out of 10 give their email`)}</p></div></div>
+    <div class="tcard "><h3>${T('Followers')}</h3>${fo.latest != null ? `<div class="lgrow"><b class="lgnum">${num(fo.latest)}</b>${fo.delta ? `<span class="${fo.delta > 0 ? 'up' : 'down'}">${fo.delta > 0 ? '+' : ''}${fo.delta} ${T('in 30 days')}</span>` : ''}</div>${fo.series.length > 1 ? sparkline(fo.series.map((x) => x.f), '#5ab4f6', 200, 46) : `<p>${T('The chart appears with more days of data.')}</p>`}` : `<p>${T('No data yet: a daily snapshot is taken.')}</p>`}</div>
     <div class="tcard "><h3>${T('Best converting reel')}</h3>${best ? `<div class="wrow">${thumbHtml(best.channel_id, best.media_id, 'rthumb')}<div><div class="lgnum" style="font-size:28px">${best.dmPerView}</div><div class="mute">${T('DMs per 100 views')}</div></div></div><p>${num(best.views)} ${T('views')} · ${num(best.dms)} DMs</p>` : `<p>${T('No data yet: reels with at least 50 views are needed.')}</p>`}</div>
   </div>
   <div class="grid g3 mt">
@@ -408,8 +408,8 @@ async function viewInicio(opts = {}) {
 }
 function gauge(sent, cap) {
   const pct = Math.min(100, Math.round(sent / cap * 100));
-  return `<div class="gauge"><svg viewBox="0 0 220 130"><defs><linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="#20584b"/><stop offset=".6" stop-color="#96645d"/><stop offset="1" stop-color="#69618a"/></linearGradient></defs>
-    <path d="M20 115 A90 90 0 0 1 200 115" fill="none" stroke="#e6e3db" stroke-width="16" stroke-linecap="round"/>
+  return `<div class="gauge"><svg viewBox="0 0 220 130"><defs><linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="#f6b73f"/><stop offset=".6" stop-color="#ee6f8c"/><stop offset="1" stop-color="#9a76f5"/></linearGradient></defs>
+    <path d="M20 115 A90 90 0 0 1 200 115" fill="none" stroke="#3f343f" stroke-width="16" stroke-linecap="round"/>
     <path d="M20 115 A90 90 0 0 1 200 115" fill="none" stroke="url(#gg)" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(pct, sent ? 2 : 0)} 100"/></svg>
     <div class="gv">${sent} / ${cap}<small>${T('per hour')}</small></div></div>`;
 }
@@ -441,7 +441,7 @@ async function viewAnalisis() {
     <div class="card mt"><h2>${T('Reels without automation')}</h2>
       ${free.length ? `<div class="freegrid">${free.slice(0, 8).map(([cid, m]) => `<button class="fr" data-fc="${cid}" data-fm="${esc(m.id)}" title="${esc((m.caption || '').slice(0, 80))}">${thumbHtml(cid, m.id, 'rthumb big')}<span>${T('Create')}</span></button>`).join('')}</div><p class="mute" style="margin:10px 0 0">${T('Tap one to create an automation for it.')}</p>` : `<p class="mute">${T('All your recent reels have an automation (or are still loading).')}</p>`}</div>
    <div class="masonry">
-    <div class="card "><h2>${T('Account reach and views')}</h2>${a.insights.has ? `<div class="kv"><div><b>${num(a.insights.views)}</b><span>${T`views in ${periodo()}`}</span></div><div><b>${num(a.insights.reach)}</b><span>${T('accounts reached')}</span></div></div>${a.insights.series.length > 1 ? sparkline(a.insights.series.map((x) => x.views ?? 0), '#426b78', 300, 60) : ''}<p class="mute" style="margin:8px 0 0">${T('A snapshot is saved every day; the chart grows over time.')}</p>` : `<p class="mute">${T('No data yet: read every 30 minutes.')}</p>`}</div>
+    <div class="card "><h2>${T('Account reach and views')}</h2>${a.insights.has ? `<div class="kv"><div><b>${num(a.insights.views)}</b><span>${T`views in ${periodo()}`}</span></div><div><b>${num(a.insights.reach)}</b><span>${T('accounts reached')}</span></div></div>${a.insights.series.length > 1 ? sparkline(a.insights.series.map((x) => x.views ?? 0), '#5ab4f6', 300, 60) : ''}<p class="mute" style="margin:8px 0 0">${T('A snapshot is saved every day; the chart grows over time.')}</p>` : `<p class="mute">${T('No data yet: read every 30 minutes.')}</p>`}</div>
     <div class="card mt"><h2>${ic('bolt')}${T('Speed')}</h2>
       <div class="kv"><div><b>${fmtDur(sp.medianLagSec)}</b><span>${T('from comment to DM')}</span></div><div><b>${fmtDur(sp.medianToEmailSec)}</b><span>${T('until they give their email')}</span></div><div><b class="${sp.lateCount ? 'warnc' : ''}">${sp.lateCount}</b><span>${T('handled late (over 5 min)')}</span></div></div>
       <p class="mute" style="margin:10px 0 0">${sp.lagSamples ? T`Median of ${sp.lagSamples} comments with a recorded time. Older ones have no such data.` : T('No comments with a recorded time yet; it fills in with new ones.')}</p></div>
@@ -457,7 +457,7 @@ async function viewAnalisis() {
       <div class="kv"><div><b>${a.followups.rate == null ? '—' : a.followups.rate + '%'}</b><span>${T('messaged you after the resource')}</span></div><div><b>${num(a.followups.wroteBack)}</b><span>${T('people')}</span></div><div><b>${num(a.followups.delivered)}</b><span>${T('got the resource')}</span></div></div>
       <p class="mute" style="margin:10px 0 0">${T('These are open conversations: you can reply from Instagram within 24 h. Checked every 30 min; only new sends count.')}</p></div>
     <div class="card mt"><h2>👥 ${T('Followers')}</h2>
-      ${fo.series.length > 1 ? `<div class="lgrow"><b class="lgnum">${num(fo.latest)}</b><span class="${fo.delta > 0 ? 'up' : fo.delta < 0 ? 'down' : 'mute'}">${fo.delta > 0 ? '+' : ''}${fo.delta} ${T('in 30 days')}</span></div>${sparkline(fo.series.map((x) => x.f), '#426b78', 300, 60)}` : `<p class="mute">${fo.latest != null ? `${num(fo.latest)} ${T('followers. The chart appears once there is more than one day of data.')}` : T('No data yet: a daily snapshot is taken.')}</p>`}</div>
+      ${fo.series.length > 1 ? `<div class="lgrow"><b class="lgnum">${num(fo.latest)}</b><span class="${fo.delta > 0 ? 'up' : fo.delta < 0 ? 'down' : 'mute'}">${fo.delta > 0 ? '+' : ''}${fo.delta} ${T('in 30 days')}</span></div>${sparkline(fo.series.map((x) => x.f), '#5ab4f6', 300, 60)}` : `<p class="mute">${fo.latest != null ? `${num(fo.latest)} ${T('followers. The chart appears once there is more than one day of data.')}` : T('No data yet: a daily snapshot is taken.')}</p>`}</div>
    </div>
   </div>`;
   masonry($('.masonry'));
