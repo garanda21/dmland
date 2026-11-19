@@ -185,6 +185,16 @@ async function api(req, res, url) {
       return send(res, 200, { id: Number(r.lastInsertRowid) });
     }
   }
+  if ((mt = p.match(/^\/api\/automations\/(\d+)\/duplicate$/)) && m === 'POST') {
+    // The copy starts paused so two automations never answer the same comment by accident.
+    const src = get('SELECT * FROM automations WHERE id=?', mt[1]);
+    if (!src) return send(res, 404, { error: 'Automation not found' });
+    const cols = ['channel_id', 'media_id', 'match_mode', 'keywords', 'exclude', 'public_replies', 'dm_text', 'button_title', 'button_url', 'tag', 'delay_seconds', 'mode', 'ask_text', 'retry_text', 'skip_known', 'alt_ask_text', 'utm'];
+    r = run(`INSERT INTO automations(name, active, since, ${cols.join(',')}) VALUES (?, 0, datetime('now'), ${cols.map(() => '?').join(',')})`,
+      `${src.name} (copy)`, ...cols.map((c) => src[c]));
+    logEvent('info', `Automation "${src.name}" duplicated (the copy starts paused)`);
+    return send(res, 200, { id: Number(r.lastInsertRowid) });
+  }
   if ((mt = p.match(/^\/api\/automations\/(\d+)$/))) {
     if (m === 'PUT') {
       run(`UPDATE automations SET channel_id=?,name=?,active=?,media_id=?,match_mode=?,keywords=?,exclude=?,public_replies=?,dm_text=?,button_title=?,button_url=?,tag=?,delay_seconds=?,mode=?,ask_text=?,retry_text=?,skip_known=?,alt_ask_text=?,utm=? WHERE id=?`,

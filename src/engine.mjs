@@ -1,4 +1,4 @@
-import { all, get, run, logEvent } from './db.mjs';
+import { all, get, run, logEvent, debugLog } from './db.mjs';
 import { apiFor } from './platform.mjs';
 
 const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();

@@ -199,7 +199,21 @@ export const all =(sql, ...p) => db.prepare(sql).all(...p);
 export const get = (sql, ...p) => db.prepare(sql).get(...p);
 export const run = (sql, ...p) => db.prepare(sql).run(...p);
 
+// Container logs (stdout). LOG_LEVEL: debug | info (default) | warn | error | off.
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, off: 99 };
+const minLevel = LEVELS[String(process.env.LOG_LEVEL || 'info').toLowerCase()] ?? LEVELS.info;
+const levelOf = (kind) => (kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : ['duplicate', 'webhook'].includes(kind) ? 'debug' : 'info');
+function writeLog(level, kind, note) {
+  if (LEVELS[level] < minLevel || process.env.NODE_TEST_CONTEXT) return;
+  const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${kind}] ${note ?? ''}`;
+  (level === 'error' || level === 'warn' ? console.error : console.log)(line);
+}
+
+// Detail that only matters while debugging: printed with LOG_LEVEL=debug, never stored in the database.
+export const debugLog = (kind, note) => writeLog('debug', kind, note);
+
 export function logEvent(kind, note, payload) {
+  writeLog(levelOf(kind), kind, note);
   run('INSERT INTO events(kind, note, payload) VALUES (?,?,?)', kind, note ?? null,
     payload === undefined ? null : JSON.stringify(payload).slice(0, 4000));
 }

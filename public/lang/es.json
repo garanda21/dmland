@@ -240,6 +240,8 @@
   "Brand name": "Nombre de la marca",
   "A/B test active": "Prueba A/B activa",
   "Test without sending": "Probar sin enviar",
+  "Duplicate": "Duplicar",
+  "Duplicated. The copy is paused until you activate it.": "Duplicada. La copia está en pausa hasta que la actives.",
   "Public reply": "Respuesta pública",
   "Couldn't send": "No se pudo enviar",
   "Create demo account": "Crear cuenta demo",

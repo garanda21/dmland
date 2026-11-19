@@ -1,6 +1,6 @@
 // Periodic comment reading (an alternative to the webhook while Meta does not deliver it).
 // No AI: it only queries the Meta API and reuses the same engine as the webhook.
-import { all, logEvent } from './db.mjs';
+import { all, logEvent, debugLog } from './db.mjs';
 import { apiFor } from './platform.mjs';
 import { handleComment, realSender, parseMetaTime, parseDbTime, throttle, sendingPaused, sendingRestriction, hasReplyBudget } from './engine.mjs';
 import { pollDMs, captureCounts } from './capture.mjs';
@@ -50,7 +50,8 @@ let lastTruncWarn = 0;
 // Processes one account. The caps (per cycle and per hour) are PER ACCOUNT, like Meta's limits.
 async function pollChannel(d, ch, now) {
   const autos = all('SELECT * FROM automations WHERE channel_id=? AND active=1', ch.id);
-  if (!autos.length || !hasReplyBudget(ch.ig_user_id)) return 0;
+  if (!autos.length) { debugLog('poll', `@${ch.username}: no active automations`); return 0; }
+  if (!hasReplyBudget(ch.ig_user_id)) { debugLog('poll', `@${ch.username}: hourly cap reached, waiting`); return 0; }
   // Which posts to look at: those with their own automation, plus the latest N if any is "all"
   const mediaIds = new Set(autos.filter((a) => a.media_id).map((a) => a.media_id));
   if (autos.some((a) => !a.media_id)) {
@@ -71,6 +72,7 @@ async function pollChannel(d, ch, now) {
     const comments = raw
       .filter((c) => now - parseMetaTime(c.timestamp) <= SEVEN_DAYS)
       .sort((a, b) => parseMetaTime(a.timestamp) - parseMetaTime(b.timestamp)); // oldest first
+    debugLog('poll', `@${ch.username} media ${mediaId}: ${raw.length} new comments read, ${comments.length} inside the 7-day window`);
     for (const c of comments) {
       if (launchedTotal >= MAX_PER_CYCLE || sendingPaused()) break;
       const launched = handleComment(
@@ -86,6 +88,7 @@ async function pollChannel(d, ch, now) {
       await d.pause();
     }
   }
+  debugLog('poll', `@${ch.username}: cycle done, ${mediaIds.size} posts checked, ${launchedTotal} replies launched`);
   return launchedTotal;
 }
 

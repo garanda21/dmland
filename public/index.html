@@ -790,7 +790,7 @@ async function viewEditor() {
         <div><label class="f" for="f_tag">Tag for the contact</label><input type="text" id="f_tag" value="${esc(a.tag)}" placeholder="lead-guia"></div>
         <div><label class="f" for="f_delay">Wait (seconds)</label><input type="number" id="f_delay" min="0" value="${a.delay_seconds}"></div>
         <div style="grid-column:1/-1"><label style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="f_utm" ${a.utm ? 'checked' : ''} style="width:auto"> Add UTM parameters to the links that are sent (to see the traffic in your analytics)</label></div></div></details>
-      <p style="margin:22px 0 0;display:flex;gap:10px;flex-wrap:wrap"><button class="btn pri" id="save">${ic('check')}Save</button><button class="btn sec" id="cancel">Cancel</button>${a.id ? '<button class="btn sec" id="sim">Test without sending</button><button class="btn del" id="del" style="margin-left:auto">Delete</button>' : ''}</p>
+      <p style="margin:22px 0 0;display:flex;gap:10px;flex-wrap:wrap"><button class="btn pri" id="save">${ic('check')}Save</button><button class="btn sec" id="cancel">Cancel</button>${a.id ? '<button class="btn sec" id="sim">Test without sending</button><button class="btn sec" id="dup">Duplicate</button><button class="btn del" id="del" style="margin-left:auto">Delete</button>' : ''}</p>
       <div id="simout"></div>
     </div>
     <div class="card preview rise" style="--i:2"><h2>${ic('chat')}Preview</h2><div id="phone" translate="no"></div><div class="mute" style="text-align:center;margin-top:12px">This is how the commenter would see it.</div></div>
@@ -851,6 +851,13 @@ function bindEditor() {
     catch (e) { toast(e.message, 'bad'); }
   };
   if (a.id) {
+    g('dup').onclick = async () => {
+      try {
+        const { id } = await api(`/api/automations/${a.id}/duplicate`, 'POST', {});
+        await loadBase(); toast(T('Duplicated. The copy is paused until you activate it.'));
+        editAuto(id);
+      } catch (err) { toast(err.message, 'bad'); }
+    };
     g('del').onclick = async () => { if (await confirmBox('Delete this automation?', 'Its run history is deleted too. This cannot be undone.')) { await api(`/api/automations/${a.id}`, 'DELETE'); toast('Deleted'); S.editing = null; await loadBase(); render(); } };
     g('sim').onclick = async () => { readForm(); try { const r = await api('/api/simulate', 'POST', { channel_id: a.channel_id, text: a.keywords[0] || 'hola', media_id: a.media_id || undefined });
       g('simout').innerHTML = `<div class="simout">${r.matched.length ? '<span>It triggered with a test comment</span> ("<span translate="no">' + esc(a.keywords[0] || 'hola') + '</span>"). <span>This is what would be sent:</span>\n\n' + r.actions.map((x) => `• <span>${x.action === 'public_reply' ? 'Public reply' : 'DM'}</span>: <span translate="no">${esc(x.text)}</span>${x.button ? ` [<span>button</span> <span translate="no">${esc(x.button.title)} → ${esc(x.button.url)}</span>]` : ''}`).join('\n') + '\n\n<span>Nothing was sent to Instagram. The test uses what is already saved.</span>' : '<span>It did not trigger with that test comment. Save your changes and test again.</span>'}</div>`; } catch (e) { toast(e.message, 'bad'); } };
