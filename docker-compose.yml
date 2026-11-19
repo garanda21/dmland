@@ -10,6 +10,8 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       TZ: Europe/Madrid
+      # Add the LAN/VPN host or IP you use to open the dashboard (Host header allowlist).
+      ALLOWED_HOSTS: ""
       HOURLY_CAP: "30"
       WEBHOOKS_ENABLED: "off"
       INBOX_ANALYTICS: "off"

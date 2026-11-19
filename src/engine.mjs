@@ -197,6 +197,8 @@ async function execute({ a, channel, comment, contact, runId, sender, instant, d
   try {
     if (!instant && a.delay_seconds > 0) await sleep(a.delay_seconds * 1000);
 
+    // Frees the comment so it is retried later. The reply_attempts row is kept on purpose:
+    // an attempt that Meta throttled or blocked still counts against the hourly cap.
     const release = () => {
       run('DELETE FROM reply_claims WHERE account_id=? AND comment_id=?', channel.ig_user_id, String(comment.id));
       run('DELETE FROM runs WHERE id=?', runId);
@@ -240,8 +242,8 @@ async function execute({ a, channel, comment, contact, runId, sender, instant, d
         String(resp?.recipient_id ?? comment.from?.id ?? '') || null, runId);
       if (askMode && !resp?.dry) createCapture({ a, channel, contact, comment, runId, resp });
     } catch (e) {
-      if (isBlocked(e)) pauseForMeta(e);
-      else if (isRateLimit(e)) {
+      // Blocked or rate limited: stop sending and keep the comment, so it is retried after the pause or a manual resume.
+      if (isBlocked(e) || isRateLimit(e)) {
         pauseForMeta(e);
         release();
         return;

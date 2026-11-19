@@ -24,15 +24,25 @@ function ensureEnv(key, value) {
 }
 ensureEnv('DASHBOARD_PASSWORD', randomBytes(9).toString('base64url'));
 ensureEnv('WEBHOOK_VERIFY_TOKEN', randomBytes(12).toString('base64url'));
+const { all, get, run, logEvent } = await import('./db.mjs');
+const { sealToken, openToken, assertTokenKey, TOKEN_PREFIX } = await import('./tokens.mjs');
+const fatal = (msg) => { console.error(`\nDMLand cannot start: ${msg}\n`); process.exit(1); };
+
 // The key can come from a file (e.g. a Docker secret) so it never sits next to the database.
-if (!process.env.TOKEN_ENCRYPTION_KEY && !process.env.TOKEN_ENCRYPTION_KEY_FILE) ensureEnv('TOKEN_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
+if (!process.env.TOKEN_ENCRYPTION_KEY && !process.env.TOKEN_ENCRYPTION_KEY_FILE) {
+  // Never generate a new key over tokens sealed with an old one: they could not be read anymore.
+  if (get('SELECT 1 FROM channels WHERE token LIKE ? LIMIT 1', TOKEN_PREFIX + '%')) {
+    fatal('TOKEN_ENCRYPTION_KEY is missing but the database has encrypted tokens. Restore the original key in .env (or TOKEN_ENCRYPTION_KEY_FILE), or reconnect the accounts after clearing their tokens.');
+  }
+  ensureEnv('TOKEN_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
+}
 if (existsSync(envPath)) chmodSync(envPath, 0o600);
 
-const { all, get, run, logEvent } = await import('./db.mjs');
-const { sealToken, openToken, assertTokenKey } = await import('./tokens.mjs');
-assertTokenKey();
-for (const channel of all('SELECT id, token FROM channels WHERE token IS NOT NULL')) {
-  const plain = openToken(channel.token);
+try { assertTokenKey(); } catch (e) { fatal(e.message); }
+for (const channel of all('SELECT id, username, token FROM channels WHERE token IS NOT NULL')) {
+  let plain;
+  try { plain = openToken(channel.token); }
+  catch { fatal(`TOKEN_ENCRYPTION_KEY does not match the stored token of @${channel.username ?? channel.id}. Restore the original key or reconnect the account.`); }
   if (plain === channel.token) run('UPDATE channels SET token=? WHERE id=?', sealToken(plain), channel.id);
 }
 
@@ -48,6 +58,13 @@ const { analytics } = await import('./analytics.mjs');
 const HOST = process.env.HOST || '127.0.0.1';
 const WEBHOOKS_ENABLED = process.env.WEBHOOKS_ENABLED === 'on';
 const PORT = Number(process.env.PORT || 3000);
+// Host allowlist against DNS rebinding. Add LAN or VPN names/IPs through ALLOWED_HOSTS (comma separated).
+const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]',
+  ...(['0.0.0.0', '::'].includes(HOST) ? [] : [HOST]),
+  ...(process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+const hostAllowed = (req) => {
+  try { return ALLOWED_HOSTS.has(new URL('http://' + (req.headers.host || '')).hostname.toLowerCase()); } catch { return false; }
+};
 const mediaCache = new Map(); // channel -> { at, data }
 const j = (s, d) => { try { return JSON.parse(s); } catch { return d; } };
 const safeEq = (a, b) => { const x = Buffer.from(String(a ?? '')), y = Buffer.from(String(b ?? '')); return x.length === y.length && timingSafeEqual(x, y); };
@@ -308,6 +325,7 @@ createServer(async (req, res) => {
       if (!WEBHOOKS_ENABLED) return send(res, 404, 'Not found', 'text/plain');
       return await webhook(req, res, url);
     }
+    if (!hostAllowed(req)) return send(res, 421, 'Host not allowed. Add it to ALLOWED_HOSTS.', 'text/plain');
     if (!authed(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="DMLand"' }); return res.end('Authentication required'); }
     if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) {
       return send(res, 403, { error: 'Cross-site requests are forbidden' });

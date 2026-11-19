@@ -1,13 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-
-const prefix = 'enc:v1:';
-
 import { readFileSync } from 'node:fs';
+
+export const TOKEN_PREFIX = 'enc:v1:';
+const prefix = TOKEN_PREFIX;
 
 // TOKEN_ENCRYPTION_KEY_FILE lets the key live outside the data volume (Docker secret, separate mount).
 function loadKey() {
   if (!process.env.TOKEN_ENCRYPTION_KEY && process.env.TOKEN_ENCRYPTION_KEY_FILE) {
-    process.env.TOKEN_ENCRYPTION_KEY = readFileSync(process.env.TOKEN_ENCRYPTION_KEY_FILE, 'utf8').trim();
+    try { process.env.TOKEN_ENCRYPTION_KEY = readFileSync(process.env.TOKEN_ENCRYPTION_KEY_FILE, 'utf8').trim(); }
+    catch (e) { throw new Error(`Could not read TOKEN_ENCRYPTION_KEY_FILE (${process.env.TOKEN_ENCRYPTION_KEY_FILE}): ${e.code || e.message}`); }
   }
 }
 
