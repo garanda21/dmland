@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="%%lang%%">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%%title%% · DMLand</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body class="login">
+<main class="login-panel">
+  <div class="wordmark">DMLand</div>
+  <h1>%%title%%</h1>
+  <form method="post" action="/login">
+    <label for="password">%%password%%</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required %%invalidField%%>
+    %%error%%
+    <button class="btn pri" type="submit">%%submit%%</button>
+  </form>
+</main>
+</body>
+</html>

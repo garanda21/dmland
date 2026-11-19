@@ -87,7 +87,7 @@ for (const marker of ['esc(a.name)', 'esc(r.comment_text)', 'esc(r.automation)',
   assert.ok(spots.length, `could not find ${marker}`);
   assert.ok(spots.some((i) => html.slice(Math.max(0, i - 300), i).includes('translate="no"')), `${marker} must sit inside translate="no"`);
 }
-assert.ok(/<h3 translate="no">\$\{esc\(a\.name\)\}<\/h3>/.test(html), 'the automation name must be translate="no"');
+assert.ok(/<h3 translate="no"><button[^>]*>\$\{esc\(a\.name\)\}<\/button><\/h3>/.test(html), 'the automation name must be translate="no"');
 assert.ok(/<div id="phone" translate="no">/.test(html), 'the phone preview must be translate="no"');
 assert.ok(/translate="no">\$\{esc\(r\.comment_text\)\}/.test(html), 'the comment must be translate="no"');
 

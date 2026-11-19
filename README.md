@@ -58,7 +58,7 @@ npm test        # optional: runs the tests, no Meta account needed
 npm start       # opens on http://localhost:3000
 ```
 
-On first run DMLand creates a `.env` file with a random dashboard password. Open `http://localhost:3000`, use any username and that password.
+On first run DMLand creates a `.env` file with a random dashboard password. Open `http://localhost:3000`, sign in with that password.
 
 **Just want to look around?** Run the demo with made-up data (two Instagram accounts and one Facebook Page) and no Meta account:
 

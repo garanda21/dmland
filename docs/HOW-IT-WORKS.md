@@ -57,7 +57,7 @@ Facebook Page support has not been tested against a real Page yet; it is built f
 ## Project layout
 
 ```
-src/server.mjs      HTTP server, dashboard API, Basic auth
+src/server.mjs      HTTP server, dashboard API and sign-in
 src/poller.mjs      reads comments and DM replies on a timer
 src/engine.mjs      matching, sending, rate limits, pause logic
 src/capture.mjs     email capture conversation
