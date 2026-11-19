@@ -113,3 +113,19 @@ assert.equal(deliver('over-cap', 'other').length, 0);
 assert.equal(await pollOnce(deps([mk('over-cap-poll', 'montage', 60e3, 'other')])), 0);
 
 console.log('OK: poller tests passed');
+
+// Restart recovery: a run left pending before the DM is freed; one whose DM went out is closed.
+{
+  const { recoverPendingRuns } = await import('../src/engine.mjs');
+  const { run: r, get: g } = await import('../src/db.mjs');
+  const ch = g('SELECT * FROM channels LIMIT 1');
+  const a = g('SELECT id FROM automations WHERE channel_id=? LIMIT 1', ch.id);
+  r(`INSERT INTO runs(automation_id, comment_id, status) VALUES (?, 'rec1', 'pending')`, a.id);
+  r(`INSERT INTO reply_claims(account_id, comment_id, media_id, author) VALUES (?, 'rec1', 'm-rec', 'id:rec')`, ch.ig_user_id);
+  r(`INSERT INTO runs(automation_id, comment_id, status, dm_status) VALUES (?, 'rec2', 'pending', 'ok')`, a.id);
+  assert.equal(recoverPendingRuns(), 1);
+  assert.equal(g(`SELECT 1 FROM runs WHERE comment_id='rec1'`), undefined);
+  assert.equal(g(`SELECT 1 FROM reply_claims WHERE comment_id='rec1'`), undefined);
+  assert.equal(g(`SELECT status FROM runs WHERE comment_id='rec2'`).status, 'done');
+  console.log('OK: restart recovery');
+}

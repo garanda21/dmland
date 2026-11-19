@@ -96,7 +96,7 @@ export function handleComment(channel, comment, { sender, dry = false, instant =
   if (from.username && channel.username && from.username === channel.username) return [];
   const mediaId = comment.media?.id ? String(comment.media.id) : null;
   const commentTime = parseMetaTime(comment.timestamp);
-  const automations = all('SELECT * FROM automations WHERE channel_id=? AND active=1 ORDER BY media_id IS NULL, id', channel.id);
+  const automations = all('SELECT * FROM automations WHERE channel_id=? AND active=1 ORDER BY media_id IS NULL, match_mode = \'any\', id', channel.id); // specific reel first, catch-all ("any comment") last
   const launched = [];
   const authorName = from.username || comment.username;
   const author = from.id ? 'id:' + from.id : authorName ? 'name:' + norm(authorName) : null;
@@ -136,6 +136,22 @@ export const throttle = { until: 0, reason: '' };
 { // restore a rate-limit pause that was still running when the process stopped
   const saved = get('SELECT until, reason FROM sending_pause WHERE id=1');
   if (saved && saved.until > Date.now()) { throttle.until = saved.until; throttle.reason = saved.reason; }
+}
+
+// Runs left 'pending' by a previous process (stopped during the delay or mid-send) would keep their
+// claim forever and that person would never get a reply. Free them so the poller picks them up again.
+export function recoverPendingRuns() {
+  const stale = all(`SELECT r.id, r.comment_id, ch.ig_user_id FROM runs r
+    JOIN automations a ON a.id=r.automation_id JOIN channels ch ON ch.id=a.channel_id
+    WHERE r.status='pending' AND r.dm_status IS NULL`);
+  // The DM already went out: close the run instead of sending it twice.
+  run("UPDATE runs SET status='done' WHERE status='pending' AND dm_status='ok'");
+  for (const r of stale) {
+    run('DELETE FROM reply_claims WHERE account_id=? AND comment_id=?', r.ig_user_id, r.comment_id);
+    run('DELETE FROM runs WHERE id=?', r.id);
+  }
+  if (stale.length) logEvent('warn', `${stale.length} reply(ies) interrupted by the last restart will be retried`);
+  return stale.length;
 }
 
 // Clears a manual stop (and any running pause). Called from the dashboard after the user reviewed the account.

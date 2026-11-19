@@ -11,7 +11,7 @@ export async function call(host, method, path, token, body) {
   const res = await fetch(`https://${host}/${VERSION}${path}`, {
     method,
     redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(30_000),
     headers: { Authorization: `Bearer ${openToken(token)}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });

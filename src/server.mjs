@@ -50,7 +50,8 @@ for (const channel of all('SELECT id, username, token FROM channels WHERE token 
 const meta = await import('./meta.mjs');
 const { apiFor } = await import('./platform.mjs');
 const { commentFromWebhook } = await import('./facebook.mjs');
-const { handleComment, realSender, drySender, hourlyCap, resumeSending } = await import('./engine.mjs');
+const { handleComment, realSender, drySender, hourlyCap, resumeSending, recoverPendingRuns } = await import('./engine.mjs');
+recoverPendingRuns();
 const poller = await import('./poller.mjs');
 const { automationFields } = await import('./automations.mjs');
 const stats = await import('./stats.mjs');
