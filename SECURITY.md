@@ -17,7 +17,7 @@ Please do not open a public issue for security problems. Use GitHub's
 
 - Never commit `.env` or `data/`. The included `.gitignore` already excludes them.
 - Never paste your access token or App Secret into chats, issues or screenshots.
-- The dashboard binds to `127.0.0.1` by default and uses HTTP Basic auth. For remote access use an encrypted private tunnel or a private HTTPS reverse proxy. Publish only the proxy and keep the raw HTTP listener private.
+- The dashboard binds to `127.0.0.1` by default and uses a password form with an eight-hour session cookie. Existing API clients can still use HTTP Basic auth. For remote access use an encrypted private tunnel or a private HTTPS reverse proxy. Publish only the proxy and keep the raw HTTP listener private.
 - Webhooks are disabled by default. Enable them only if needed and route only `/webhooks/meta` to Meta. The app requires signed events. Polling requires no inbound public route.
 - On upgrade the app encrypts existing token rows. Older backups and SQLite storage may still contain the original plaintext. Rotate any previously stored tokens if upgrading an existing installation.
 - You are responsible for how you use collected emails (consent, privacy laws such as GDPR).

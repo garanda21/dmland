@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { canAttemptLogin, endSession, hasSession, passwordMatches, recordLoginFailure, sameOriginMutation, startSession } from './session.mjs';
 import { readFileSync, writeFileSync, existsSync, readdirSync, chmodSync } from 'node:fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,8 @@ for (const channel of all('SELECT id, username, token FROM channels WHERE token 
 const meta = await import('./meta.mjs');
 const { apiFor } = await import('./platform.mjs');
 const { commentFromWebhook } = await import('./facebook.mjs');
-const { handleComment, realSender, drySender, hourlyCap, resumeSending } = await import('./engine.mjs');
+const { handleComment, realSender, drySender, hourlyCap, resumeSending, recoverPendingRuns } = await import('./engine.mjs');
+recoverPendingRuns();
 const poller = await import('./poller.mjs');
 const { automationFields } = await import('./automations.mjs');
 const stats = await import('./stats.mjs');
@@ -87,11 +89,31 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
-function authed(req) {
+// Preserve password-based authentication for scripts calling the API.
+function apiAuth(req) {
   const h = req.headers.authorization || '';
-  if (!h.startsWith('Basic ')) return false;
-  const pass = Buffer.from(h.slice(6), 'base64').toString().split(':').slice(1).join(':');
-  return safeEq(pass, process.env.DASHBOARD_PASSWORD);
+  if (!h.startsWith('Basic ') || !canAttemptLogin(req)) return false;
+  const decoded = Buffer.from(h.slice(6), 'base64').toString();
+  const separator = decoded.indexOf(':');
+  if (separator >= 0 && passwordMatches(decoded.slice(separator + 1))) return true;
+  recordLoginFailure(req);
+  return false;
+}
+
+const publicDir = join(root, 'public');
+const loginTemplate = readFileSync(join(publicDir, 'login.html'), 'utf8');
+function loginPage(req, res, status = 200, error = '') {
+  const spanish = /^es(?:[-,;]|$)/i.test(req.headers['accept-language'] || '');
+  const labels = spanish
+    ? { lang: 'es', title: 'Iniciar sesión', password: 'Contraseña del panel', submit: 'Entrar', invalid: 'La contraseña es incorrecta.', wait: 'Demasiados intentos. Vuelve a intentarlo en un minuto.' }
+    : { lang: 'en', title: 'Sign in', password: 'Dashboard password', submit: 'Sign in', invalid: 'The password is incorrect.', wait: 'Too many attempts. Try again in a minute.' };
+  const content = { ...labels, error: error ? `<p id="login-error" class="login-error" role="alert">${labels[error]}</p>` : '', invalidField: error === 'invalid' ? 'aria-invalid="true" aria-describedby="login-error"' : '' };
+  send(res, status, loginTemplate.replace(/%%(\w+)%%/g, (_, key) => content[key]), 'text/html');
+}
+
+function redirect(res, target) {
+  res.writeHead(303, { Location: target });
+  res.end();
 }
 
 const publicChannel = (c) => ({ ...c, token: c.token ? '••••' + openToken(c.token).slice(-4) : null });
@@ -328,7 +350,7 @@ async function webhook(req, res, url) {
   });
 }
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/webhooks/meta') {
@@ -336,9 +358,44 @@ createServer(async (req, res) => {
       return await webhook(req, res, url);
     }
     if (!hostAllowed(req)) return send(res, 421, 'Host not allowed. Add it to ALLOWED_HOSTS.', 'text/plain');
-    if (!authed(req)) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="DMLand"' }); return res.end('Authentication required'); }
-    if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    const path = url.pathname;
+    const method = req.method;
+    if (!['GET', 'HEAD'].includes(method) && !sameOriginMutation(req)) {
       return send(res, 403, { error: 'Cross-site requests are forbidden' });
+    }
+    if (path === '/theme.css' && method === 'GET') {
+      return send(res, 200, readFileSync(join(publicDir, 'theme.css')), 'text/css');
+    }
+    if (path === '/login' && method === 'GET') {
+      return hasSession(req) ? redirect(res, '/') : loginPage(req, res);
+    }
+    if (path === '/login' && method === 'POST') {
+      if (req.headers['content-type']?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+        return send(res, 415, 'Expected a login form', 'text/plain');
+      }
+      const form = new URLSearchParams((await readBody(req)).toString());
+      if (!canAttemptLogin(req)) {
+        res.setHeader('Retry-After', '60');
+        return loginPage(req, res, 429, 'wait');
+      }
+      if (!passwordMatches(form.get('password') || '')) {
+        recordLoginFailure(req);
+        return loginPage(req, res, 401, 'invalid');
+      }
+      startSession(req, res);
+      return redirect(res, '/');
+    }
+    if (path === '/logout' && method === 'POST') {
+      endSession(req, res);
+      return redirect(res, '/login');
+    }
+    if (!hasSession(req) && !(path.startsWith('/api/') && apiAuth(req))) {
+      if (path === '/' || path === '/index.html') return redirect(res, '/login');
+      return send(res, 401, { error: 'Authentication required' });
     }
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/' || url.pathname === '/index.html') return send(res, 200, readFileSync(join(root, 'public', 'index.html')), 'text/html');
@@ -349,8 +406,8 @@ createServer(async (req, res) => {
     if (!res.headersSent) send(res, e.status === 413 ? 413 : 400, { error: e.message });
   }
 }).listen(PORT, HOST, () => {
-  console.log(`\nDMLand running at http://${HOST}:${PORT}`);
-  console.log('Username: anything   Password: the DASHBOARD_PASSWORD line in your .env file\n');
+  console.log(`\nDMLand running at http://${HOST}:${server.address().port}`);
+  console.log('Sign in with the DASHBOARD_PASSWORD line in your .env file\n');
   if (process.env.POLL !== 'off') poller.startPoller(Number(process.env.POLL_SECONDS || 60));
   if (process.env.POLL !== 'off') { stats.startStats(); stats.startHeartbeat(); } // daily snapshots + uptime log
 });

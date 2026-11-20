@@ -18,7 +18,7 @@ RUN mkdir -p /data /config && chown node:node /data /config
 USER node
 
 EXPOSE 3000
-# Any HTTP answer (the dashboard replies 401 without credentials) means the server is up.
+# Any HTTP answer (the dashboard redirects to sign-in without a session) means the server is up.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:3000/').then(()=>process.exit(0),()=>process.exit(1))"
 

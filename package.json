@@ -9,6 +9,6 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.mjs",
     "demo": "node --disable-warning=ExperimentalWarning scripts/demo.mjs",
-    "test": "node --disable-warning=ExperimentalWarning test/engine.test.mjs && node --disable-warning=ExperimentalWarning test/poller.test.mjs && node --disable-warning=ExperimentalWarning test/capture.test.mjs && node --disable-warning=ExperimentalWarning test/facebook.test.mjs && node --disable-warning=ExperimentalWarning test/analytics.test.mjs && node --disable-warning=ExperimentalWarning test/i18n.test.mjs"
+    "test": "node --disable-warning=ExperimentalWarning test/engine.test.mjs && node --disable-warning=ExperimentalWarning test/poller.test.mjs && node --disable-warning=ExperimentalWarning test/capture.test.mjs && node --disable-warning=ExperimentalWarning test/facebook.test.mjs && node --disable-warning=ExperimentalWarning test/analytics.test.mjs && node --disable-warning=ExperimentalWarning test/i18n.test.mjs && node --disable-warning=ExperimentalWarning test/session.test.mjs"
   }
 }
