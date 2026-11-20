@@ -3,9 +3,46 @@
 // Everything here is returned in Instagram's shape: posts as {id, caption, thumbnail_url, permalink,
 // timestamp, ...} and comments as {id, text, username, timestamp, from}.
 // The "account id" is the Page ID; the token is a Page access token (or a system user token with the Page assigned).
-import { call } from './meta.mjs';
+import { call as rawCall } from './meta.mjs';
+import { openToken } from './tokens.mjs';
 
 export const DEFAULT_HOST = 'graph.facebook.com';
+
+// Most Page endpoints (posts, comments, Messenger, subscribed_apps) reject a system user token
+// with #210/#190 and require a Page access token. We derive the Page tokens from the stored token
+// once (via /me/accounts) and cache them in memory; if the stored token already is a Page token,
+// /me/accounts fails and we keep using it as-is.
+const PAGE_TOKEN_TTL = 60 * 60 * 1000;
+const pageTokens = new Map(); // stored token -> { at, pages: Map(pageId -> pageToken) | null }
+
+async function pagesFor(host, token) {
+  const hit = pageTokens.get(token);
+  if (hit && Date.now() - hit.at < PAGE_TOKEN_TTL) return hit.pages;
+  let pages = null;
+  try {
+    const r = await rawCall(host, 'GET', '/me/accounts?fields=id,access_token&limit=100', token);
+    const list = (r.data || []).filter((p) => p.id && p.access_token);
+    if (list.length) pages = new Map(list.map((p) => [String(p.id), p.access_token]));
+  } catch { /* not a user/system user token: use it directly */ }
+  pageTokens.set(token, { at: Date.now(), pages });
+  return pages;
+}
+
+// Picks the Page token for a request path: "/{pageId}/...", "/{pageId}_{postId}/...", or, for paths
+// that do not carry the Page ID (comment IDs), the only Page the token manages.
+async function tokenFor(host, token, path) {
+  const pages = await pagesFor(host, token);
+  if (!pages) return token;
+  const id = (path.match(/^\/(\d+)/) || [])[1];
+  if (id && pages.has(id)) return pages.get(id);
+  const prefix = (path.match(/^\/(\d+)_/) || [])[1];
+  if (prefix && pages.has(prefix)) return pages.get(prefix);
+  if (pages.size === 1) return [...pages.values()][0];
+  return token;
+}
+
+const call = async (host, method, path, token, body) =>
+  rawCall(host, method, path, await tokenFor(host, openToken(token), path), body);
 
 // Page data. Facebook Pages may have no @username: fall back to the name without spaces.
 export const getAccount = async (host, token, pageId) => {
